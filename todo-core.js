@@ -3,6 +3,16 @@ const path = require('path');
 const os = require('os');
 const { StorageConfig } = require('./storage-config');
 
+// Optional import of Todo model for enhanced validation
+let Todo = null;
+try {
+  const todoModel = require('./todo-model');
+  Todo = todoModel.Todo;
+} catch (error) {
+  // Todo model not available, use legacy validation
+  Todo = null;
+}
+
 class TodoCore {
   constructor(dataFile = null, config = null) {
     // Support both legacy dataFile parameter and new config system
@@ -344,67 +354,93 @@ class TodoCore {
     return Math.max(...this.todos.map(todo => todo.id)) + 1;
   }
 
+  /**
+   * Create a todo object using the new Todo model if available,
+   * otherwise fall back to legacy object creation
+   */
+  createTodoObject(description, options = {}) {
+    const todoData = {
+      id: this.nextId++,
+      description: description.trim(),
+      completed: false,
+      priority: options.priority || 'medium',
+      tags: options.tags || [],
+      createdAt: new Date().toISOString()
+    };
+
+    // Add due date if provided
+    if (options.dueDate !== undefined) {
+      todoData.dueDate = options.dueDate;
+    }
+
+    if (Todo) {
+      // Use new Todo model for enhanced validation
+      try {
+        return new Todo(todoData).toObject();
+      } catch (error) {
+        // If new model validation fails, throw the validation error
+        throw new Error(error.message);
+      }
+    } else {
+      // Legacy validation (existing code)
+      const { priority = 'medium', dueDate, tags = [] } = options;
+
+      if (!['low', 'medium', 'high'].includes(priority)) {
+        throw new Error('Priority must be low, medium, or high');
+      }
+
+      if (dueDate !== undefined) {
+        if (typeof dueDate !== 'string' || isNaN(Date.parse(dueDate))) {
+          throw new Error('Due date must be a valid ISO date string');
+        }
+      }
+
+      if (!Array.isArray(tags) || !tags.every(tag => typeof tag === 'string')) {
+        throw new Error('Tags must be an array of strings');
+      }
+
+      return {
+        ...todoData,
+        tags: tags.map(tag => tag.trim()).filter(tag => tag.length > 0)
+      };
+    }
+  }
+
   addTodo(description, options = {}) {
     if (!description || description.trim().length === 0) {
       return { success: false, error: 'Description is required' };
     }
 
-    // Validate options
-    const { priority = 'medium', dueDate, tags = [] } = options;
+    try {
+      const todo = this.createTodoObject(description, options);
+      this.todos.push(todo);
 
-    if (!['low', 'medium', 'high'].includes(priority)) {
-      return { success: false, error: 'Priority must be low, medium, or high' };
-    }
-
-    if (dueDate !== undefined) {
-      if (typeof dueDate !== 'string' || isNaN(Date.parse(dueDate))) {
-        return { success: false, error: 'Due date must be a valid ISO date string' };
+      const saveResult = this.saveTodos();
+      if (saveResult.success) {
+        return {
+          success: true,
+          todo,
+          storage: {
+            saved: true,
+            count: saveResult.count,
+            location: saveResult.location,
+            duration: saveResult.duration,
+            attempt: saveResult.attempt
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: saveResult.error || 'Failed to save todo',
+          storage: {
+            saved: false,
+            attempts: saveResult.attempts,
+            duration: saveResult.duration
+          }
+        };
       }
-    }
-
-    if (!Array.isArray(tags) || !tags.every(tag => typeof tag === 'string')) {
-      return { success: false, error: 'Tags must be an array of strings' };
-    }
-
-    const todo = {
-      id: this.nextId++,
-      description: description.trim(),
-      completed: false,
-      priority,
-      tags: tags.map(tag => tag.trim()).filter(tag => tag.length > 0),
-      createdAt: new Date().toISOString()
-    };
-
-    // Add due date if provided
-    if (dueDate !== undefined) {
-      todo.dueDate = dueDate;
-    }
-
-    this.todos.push(todo);
-
-    const saveResult = this.saveTodos();
-    if (saveResult.success) {
-      return {
-        success: true,
-        todo,
-        storage: {
-          saved: true,
-          count: saveResult.count,
-          location: saveResult.location,
-          duration: saveResult.duration,
-          attempt: saveResult.attempt
-        }
-      };
-    } else {
-      return {
-        success: false,
-        error: saveResult.error || 'Failed to save todo',
-        storage: {
-          saved: false,
-          attempts: saveResult.attempts,
-          duration: saveResult.duration
-        }
-      };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   }
 
