@@ -351,22 +351,48 @@ class TodoCoreEnhanced {
   }
 
   /**
-   * Delete a todo item
+   * Delete a todo item by ID or index
+   * @param {number|string} identifier - The todo ID or index (1-based)
+   * @param {Object} options - Options for deletion
+   * @param {boolean} options.useIndex - If true, treat identifier as index (1-based position)
+   * @returns {Object} Result with success status, deleted todo, and storage info
    */
-  async deleteTodo(id) {
+  async deleteTodo(identifier, options = {}) {
     await this.ensureInitialized();
 
-    const numId = parseInt(id);
-    if (isNaN(numId)) {
-      return { success: false, error: 'Invalid ID format' };
-    }
+    const { useIndex = false } = options;
+    let todoIndex = -1;
+    let todo = null;
 
-    const todoIndex = this.todos.findIndex(t => t.id === numId);
-    if (todoIndex === -1) {
-      return { success: false, error: `Todo with ID ${numId} not found` };
-    }
+    if (useIndex) {
+      // Index-based deletion (1-based indexing for user-friendly interface)
+      const index = parseInt(identifier);
+      if (isNaN(index) || index < 1) {
+        return { success: false, error: 'Invalid index format. Index must be a positive number starting from 1.' };
+      }
 
-    const todo = this.todos[todoIndex];
+      // Convert 1-based user index to 0-based array index
+      const arrayIndex = index - 1;
+      if (arrayIndex >= this.todos.length) {
+        return { success: false, error: `Index ${index} is out of range. Current list has ${this.todos.length} todo(s).` };
+      }
+
+      todoIndex = arrayIndex;
+      todo = this.todos[todoIndex];
+    } else {
+      // ID-based deletion (existing functionality)
+      const numId = parseInt(identifier);
+      if (isNaN(numId)) {
+        return { success: false, error: 'Invalid ID format' };
+      }
+
+      todoIndex = this.todos.findIndex(t => t.id === numId);
+      if (todoIndex === -1) {
+        return { success: false, error: `Todo with ID ${numId} not found` };
+      }
+
+      todo = this.todos[todoIndex];
+    }
 
     // Create Todo model instance if available for enhanced delete validation
     if (Todo) {
@@ -379,7 +405,7 @@ class TodoCoreEnhanced {
           };
         }
       } catch (error) {
-        this.log('warn', `Failed to validate delete for todo ${numId}: ${error.message}`);
+        this.log('warn', `Failed to validate delete for todo ${todo.id}: ${error.message}`);
       }
     }
 
@@ -390,6 +416,8 @@ class TodoCoreEnhanced {
       return {
         success: true,
         todo,
+        method: useIndex ? 'index' : 'id',
+        deletedFrom: useIndex ? `position ${identifier}` : `ID ${identifier}`,
         storage: {
           saved: true,
           count: saveResult.metadata.count,

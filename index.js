@@ -87,13 +87,18 @@ async function completeTodo(id) {
   return true;
 }
 
-// Delete a todo
-async function deleteTodo(id) {
-  const result = await todoCore.deleteTodo(id);
+// Delete a todo by ID or index
+async function deleteTodo(identifier, options = {}) {
+  const { useIndex = false } = options;
+  const result = await todoCore.deleteTodo(identifier, { useIndex });
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
-    console.error('💡 Use "node index.js list" to see available todos');
+    if (useIndex) {
+      console.error('💡 Use "node index.js list" to see todo positions (1-based indexing)');
+    } else {
+      console.error('💡 Use "node index.js list" to see available todo IDs');
+    }
     if (result.storage && !result.storage.saved) {
       console.error('⚠️  Warning: Changes were not saved to storage');
     }
@@ -101,7 +106,9 @@ async function deleteTodo(id) {
   }
 
   const status = result.todo.completed ? '✓' : ' ';
+  const deleteMethod = result.method === 'index' ? 'position' : 'ID';
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
+  console.log(`   Deleted by ${deleteMethod}: ${result.deletedFrom}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
 
   // Display storage info if available
@@ -248,32 +255,48 @@ async function clearAllTodos(options = {}) {
 function showDeleteHelp() {
   console.log('🗑️  DELETE COMMAND HELP');
   console.log('');
-  console.log('Delete a todo item permanently from your list.');
+  console.log('Delete a todo item permanently from your list by ID or position.');
   console.log('');
   console.log('📋 SYNTAX:');
-  console.log('  node index.js delete <id>           - Delete todo by ID');
-  console.log('  node index.js remove <id>           - Same as delete');
-  console.log('  node index.js rm <id>               - Same as delete');
+  console.log('  node index.js delete <id>           - Delete todo by ID (default)');
+  console.log('  node index.js delete <position> --index - Delete todo by position (1-based)');
+  console.log('  node index.js remove <id/position>  - Same as delete');
+  console.log('  node index.js rm <id/position>      - Same as delete');
   console.log('');
   console.log('📝 PARAMETERS:');
   console.log('  <id>                                - The ID number of the todo to delete');
-  console.log('                                        Must be a valid number (1, 2, 3, etc.)');
+  console.log('  <position>                          - The position in the list (1-based indexing)');
+  console.log('  --index                             - Use position-based deletion instead of ID');
   console.log('');
   console.log('✨ EXAMPLES:');
+  console.log('  🔢 By ID (default behavior):');
   console.log('  node index.js delete 5              - Delete todo with ID 5');
   console.log('  node index.js remove 2              - Delete todo with ID 2 (alias)');
   console.log('  node index.js rm 10                 - Delete todo with ID 10 (alias)');
   console.log('');
+  console.log('  📍 By Position (with --index flag):');
+  console.log('  node index.js delete 1 --index      - Delete first todo in list');
+  console.log('  node index.js delete 3 --index      - Delete third todo in list');
+  console.log('  node index.js rm 2 --index          - Delete second todo in list');
+  console.log('');
+  console.log('🔄 DIFFERENCE BETWEEN ID AND POSITION:');
+  console.log('  • ID: Unique identifier (e.g., #5, #7, #12) - never changes');
+  console.log('  • Position: Current order in list (1st, 2nd, 3rd) - changes as you add/remove');
+  console.log('  • Use ID when you know the specific todo number shown in list');
+  console.log('  • Use position when you want to delete "the first todo" or "the last todo"');
+  console.log('');
   console.log('💡 TIPS:');
-  console.log('  • Use "node index.js list" to see all todos and their IDs');
+  console.log('  • Use "node index.js list" to see all todos with their IDs and positions');
+  console.log('  • Position counting starts at 1 (not 0) for user-friendly interface');
   console.log('  • Deleting a todo is permanent - it cannot be undone');
   console.log('  • You can delete both completed and pending todos');
   console.log('  • The app will show you what was deleted and remaining count');
   console.log('');
   console.log('❌ COMMON ERRORS:');
-  console.log('  • "Todo not found" - Use "list" to check available IDs');
-  console.log('  • "Invalid ID" - Make sure to provide a number, not text');
-  console.log('  • "Missing ID" - You must specify which todo to delete');
+  console.log('  • "Todo not found" - ID doesn\'t exist, use "list" to check available IDs');
+  console.log('  • "Index out of range" - Position is beyond list size');
+  console.log('  • "Invalid ID/position" - Must provide a valid number');
+  console.log('  • "Missing ID/position" - You must specify which todo to delete');
   console.log('');
   console.log('📚 MORE HELP:');
   console.log('  node index.js help                  - Show all available commands');
@@ -785,7 +808,8 @@ function showUsage() {
   console.log('  add "description"                   - Add a new todo');
   console.log('  list                                - List all todos');
   console.log('  complete <id>                       - Mark todo as complete');
-  console.log('  delete <id>                         - Delete a todo');
+  console.log('  delete <id>                         - Delete a todo by ID');
+  console.log('  delete <position> --index           - Delete a todo by position');
   console.log('  clean                               - Delete all completed todos');
   console.log('  clear                               - Delete ALL todos');
   console.log('  config <subcommand>                 - Manage storage configuration');
@@ -1016,6 +1040,7 @@ function parseArguments() {
   // Extract global storage options and flags first
   const filteredArgs = [];
   let forceFlag = false;
+  let indexFlag = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -1032,12 +1057,15 @@ function parseArguments() {
       parsed.storageOptions.dataFile = arg.split('=', 2)[1];
     } else if (arg === '--force') {
       forceFlag = true;
+    } else if (arg === '--index') {
+      indexFlag = true;
     } else {
       filteredArgs.push(arg);
     }
   }
 
   parsed.force = forceFlag;
+  parsed.useIndex = indexFlag;
 
   if (filteredArgs.length === 0) {
     return { command: 'list', ...parsed };
@@ -1057,7 +1085,7 @@ function parseArguments() {
     case 'delete':
     case 'remove':
     case 'rm':
-      return { command: 'delete', id: filteredArgs[1], ...parsed };
+      return { command: 'delete', identifier: filteredArgs[1], useIndex: parsed.useIndex, ...parsed };
     case 'clean':
     case 'cleanup':
       return { command: 'clean', force: parsed.force, ...parsed };
@@ -1122,16 +1150,21 @@ function validateCommand(parsed) {
       break;
 
     case 'delete':
-      if (!parsed.id) {
-        console.error('❌ Error: Delete command requires a todo ID');
-        console.error('📋 Usage: node index.js delete <id>');
-        console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
+      if (!parsed.identifier) {
+        const usage = parsed.useIndex ? 'node index.js delete <position> --index' : 'node index.js delete <id>';
+        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions (1-based indexing)' : 'Use "node index.js list" to see available todo IDs';
+        console.error(`❌ Error: Delete command requires a ${parsed.useIndex ? 'position' : 'todo ID'}`);
+        console.error(`📋 Usage: ${usage}`);
+        console.error(`💡 Tip: ${tip}`);
         return false;
       }
-      if (isNaN(parseInt(parsed.id))) {
-        console.error('❌ Error: Todo ID must be a valid number');
-        console.error(`📋 You provided: "${parsed.id}" - this should be a number like 1, 2, 3, etc.`);
-        console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
+      if (isNaN(parseInt(parsed.identifier))) {
+        const type = parsed.useIndex ? 'position' : 'Todo ID';
+        const example = parsed.useIndex ? 'position like 1, 2, 3' : 'number like 1, 2, 3';
+        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions' : 'Use "node index.js list" to see available todo IDs';
+        console.error(`❌ Error: ${type} must be a valid number`);
+        console.error(`📋 You provided: "${parsed.identifier}" - this should be a ${example}, etc.`);
+        console.error(`💡 Tip: ${tip}`);
         return false;
       }
       break;
@@ -1170,7 +1203,7 @@ async function main() {
         success = await completeTodo(parsed.id);
         break;
       case 'delete':
-        success = await deleteTodo(parsed.id);
+        success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex });
         break;
       case 'clean':
         success = await cleanCompletedTodos({ force: parsed.force });

@@ -7,7 +7,7 @@
     "todo": "./index.js"
   },
   "scripts": {
-    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-migration-manager.js && node test-recovery-manager.js",
+    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-migration-manager.js && node test-recovery-manager.js && node test-delete-by-index.js",
     "test:core": "node test.js",
     "test:autosave": "node test-autosave-integration.js",
     "test:storage": "node test-storage-config.js",
