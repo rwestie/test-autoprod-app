@@ -1,30 +1,116 @@
 const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 class TodoCore {
-  constructor(dataFile = './todos.json') {
-    this.dataFile = dataFile;
+  constructor(dataFile = null) {
+    this.dataFile = dataFile || this.getDefaultDataFile();
+    this.backupFile = this.dataFile + '.backup';
+    this.tempFile = this.dataFile + '.tmp';
     this.todos = this.loadTodos();
     this.nextId = this.getNextId();
+  }
+
+  getDefaultDataFile() {
+    // Use a more appropriate default location
+    const homeDir = os.homedir();
+    const todosDir = path.join(homeDir, '.todos');
+
+    // Ensure the directory exists
+    if (!fs.existsSync(todosDir)) {
+      try {
+        fs.mkdirSync(todosDir, { recursive: true });
+      } catch (error) {
+        // Fall back to current directory if we can't create home directory
+        return './todos.json';
+      }
+    }
+
+    return path.join(todosDir, 'todos.json');
+  }
+
+  validateTodoData(data) {
+    if (!Array.isArray(data)) {
+      throw new Error('Todo data must be an array');
+    }
+
+    return data.filter(todo => {
+      // Validate each todo has required fields
+      return todo &&
+             typeof todo.id === 'number' &&
+             typeof todo.description === 'string' &&
+             typeof todo.completed === 'boolean' &&
+             typeof todo.createdAt === 'string';
+    });
   }
 
   loadTodos() {
     try {
       if (fs.existsSync(this.dataFile)) {
         const data = fs.readFileSync(this.dataFile, 'utf8');
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        const validated = this.validateTodoData(parsed);
+
+        // If validation filtered out items, save the cleaned data
+        if (validated.length !== parsed.length) {
+          console.warn(`Filtered out ${parsed.length - validated.length} invalid todo items`);
+          this.todos = validated;
+          this.saveTodos();
+        }
+
+        return validated;
       }
     } catch (error) {
       console.error('Error loading todos:', error.message);
+
+      // Try to load from backup
+      if (fs.existsSync(this.backupFile)) {
+        console.log('Attempting to restore from backup...');
+        try {
+          const backupData = fs.readFileSync(this.backupFile, 'utf8');
+          const parsed = JSON.parse(backupData);
+          const validated = this.validateTodoData(parsed);
+          console.log('Successfully restored from backup');
+          return validated;
+        } catch (backupError) {
+          console.error('Backup restoration failed:', backupError.message);
+        }
+      }
     }
     return [];
   }
 
   saveTodos() {
     try {
-      fs.writeFileSync(this.dataFile, JSON.stringify(this.todos, null, 2));
+      // Create backup of current file before saving
+      if (fs.existsSync(this.dataFile)) {
+        fs.copyFileSync(this.dataFile, this.backupFile);
+      }
+
+      // Atomic write: write to temp file first, then rename
+      const data = JSON.stringify(this.todos, null, 2);
+      fs.writeFileSync(this.tempFile, data);
+
+      // Verify the temp file can be parsed before finalizing
+      const verification = fs.readFileSync(this.tempFile, 'utf8');
+      JSON.parse(verification); // This will throw if invalid JSON
+
+      // Atomic move to final location
+      fs.renameSync(this.tempFile, this.dataFile);
+
       return true;
     } catch (error) {
       console.error('Error saving todos:', error.message);
+
+      // Clean up temp file if it exists
+      if (fs.existsSync(this.tempFile)) {
+        try {
+          fs.unlinkSync(this.tempFile);
+        } catch (cleanupError) {
+          console.error('Error cleaning up temp file:', cleanupError.message);
+        }
+      }
+
       return false;
     }
   }
@@ -106,25 +192,40 @@ class TodoCore {
   }
 }
 
+// Singleton instance for functional API
+let _globalTodoCore = null;
+
+function getGlobalTodoCore() {
+  if (!_globalTodoCore) {
+    _globalTodoCore = new TodoCore();
+  }
+  return _globalTodoCore;
+}
+
 // Functional API
 function add_todo(description) {
-  const core = new TodoCore();
+  const core = getGlobalTodoCore();
   return core.addTodo(description);
 }
 
 function list_todos() {
-  const core = new TodoCore();
+  const core = getGlobalTodoCore();
   return core.listTodos();
 }
 
 function complete_todo(id) {
-  const core = new TodoCore();
+  const core = getGlobalTodoCore();
   return core.completeTodo(id);
 }
 
 function delete_todo(id) {
-  const core = new TodoCore();
+  const core = getGlobalTodoCore();
   return core.deleteTodo(id);
+}
+
+// Function to reset the global instance (useful for testing)
+function reset_global_core() {
+  _globalTodoCore = null;
 }
 
 module.exports = {
@@ -132,5 +233,6 @@ module.exports = {
   add_todo,
   list_todos,
   complete_todo,
-  delete_todo
+  delete_todo,
+  reset_global_core
 };
