@@ -194,6 +194,33 @@ async function completeTodo(id) {
   return true;
 }
 
+async function uncompleteTodo(id) {
+  const result = await todoCore.incompleteTodo(id);
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
+    return false;
+  }
+
+  if (result.message) {
+    console.log(`ℹ️  ${result.message}`);
+  } else {
+    console.log(`🔄 Marked todo #${result.todo.id} as incomplete: ${result.todo.description}`);
+
+    // Display storage info if available
+    if (result.storage && result.storage.saved) {
+      console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+      if (result.storage.duration !== undefined) {
+        console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+      }
+    }
+  }
+  return true;
+}
+
 // Delete a todo by ID or index
 async function deleteTodo(identifier, options = {}) {
   const { useIndex = false, force = false } = options;
@@ -1475,6 +1502,7 @@ function showUsage() {
   console.log('    --tag work                        - List todos tagged with "work"');
   console.log('    --search "meeting"                - Search todos containing "meeting"');
   console.log('  complete <id>                       - Mark todo as complete');
+  console.log('  uncomplete <id>                     - Mark completed todo as incomplete');
   console.log('  delete <id>                         - Delete a todo by ID (with confirmation)');
   console.log('  delete <position> --index           - Delete a todo by position (with confirmation)');
   console.log('  delete <id> --force                 - Delete without confirmation');
@@ -1500,6 +1528,7 @@ function showUsage() {
   console.log('  node index.js add "Buy groceries"   - Add a new todo');
   console.log('  node index.js list                  - Show all todos');
   console.log('  node index.js complete 1            - Mark todo #1 as done');
+  console.log('  node index.js uncomplete 1          - Mark todo #1 as incomplete again');
   console.log('  node index.js delete 2              - Delete todo #2');
   console.log('  node index.js batch-delete 1 3 5    - Delete todos #1, #3, and #5');
   console.log('  node index.js clean                 - Remove all completed todos');
@@ -1523,6 +1552,7 @@ function showUsage() {
   console.log('COMMAND ALIASES:');
   console.log('  ls, list                            - List todos');
   console.log('  done, complete                      - Mark complete');
+  console.log('  incomplete, uncomplete              - Mark incomplete');
   console.log('  rm, remove, delete                  - Delete todos');
   console.log('  batch-rm, batch-remove, batch-delete - Delete multiple todos');
   console.log('  clean, cleanup                      - Delete completed todos');
@@ -1630,6 +1660,25 @@ function showCommandHelp(command) {
       console.log('✨ EXAMPLES:');
       console.log('  node index.js complete 1');
       console.log('  node index.js done 5');
+      break;
+    case 'uncomplete':
+    case 'incomplete':
+      console.log('🔄 UNCOMPLETE COMMAND HELP');
+      console.log('');
+      console.log('Mark a completed todo as incomplete (reactivate it).');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js uncomplete <id>');
+      console.log('  node index.js incomplete <id>');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js uncomplete 1');
+      console.log('  node index.js incomplete 5');
+      console.log('');
+      console.log('💡 NOTES:');
+      console.log('  • Use "list" command to see all todos with their completion status');
+      console.log('  • Can only uncomplete todos that are already completed');
+      console.log('  • This removes the completion date from the todo');
       break;
     case 'autosave':
     case 'auto-save':
@@ -1744,7 +1793,7 @@ function showCommandHelp(command) {
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete, clean, clear, undo, config, autosave, migrate, backup, export, import');
+      console.log('Available commands: add, list, complete, uncomplete, delete, clean, clear, undo, config, autosave, migrate, backup, export, import');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
@@ -1864,6 +1913,9 @@ function parseArguments() {
     case 'complete':
     case 'done':
       return { command: 'complete', id: filteredArgs[1], ...parsed };
+    case 'uncomplete':
+    case 'incomplete':
+      return { command: 'uncomplete', id: filteredArgs[1], ...parsed };
     case 'delete':
     case 'remove':
     case 'rm':
@@ -1959,6 +2011,18 @@ function validateCommand(parsed) {
       }
       break;
 
+    case 'uncomplete':
+      if (!parsed.id) {
+        console.error('Error: Uncomplete command requires a todo ID');
+        console.error('Usage: node index.js uncomplete <id>');
+        return false;
+      }
+      if (isNaN(parseInt(parsed.id))) {
+        console.error('Error: Todo ID must be a valid number');
+        return false;
+      }
+      break;
+
     case 'delete':
       if (!parsed.identifier) {
         const usage = parsed.useIndex ? 'node index.js delete <position> --index' : 'node index.js delete <id>';
@@ -2043,6 +2107,9 @@ async function main() {
         break;
       case 'complete':
         success = await completeTodo(parsed.id);
+        break;
+      case 'uncomplete':
+        success = await uncompleteTodo(parsed.id);
         break;
       case 'delete':
         success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex, force: parsed.force });

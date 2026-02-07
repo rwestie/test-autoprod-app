@@ -492,6 +492,50 @@ class TodoCore {
     }
   }
 
+  incompleteTodo(id) {
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    const todo = this.todos.find(t => t.id === numId);
+    if (!todo) {
+      return { success: false, error: `Todo with ID ${numId} not found` };
+    }
+
+    if (!todo.completed) {
+      return { success: true, message: `Todo #${todo.id} was already incomplete` };
+    }
+
+    todo.completed = false;
+    todo.completedAt = undefined;
+
+    const saveResult = this.saveTodos();
+    if (saveResult.success) {
+      return {
+        success: true,
+        todo,
+        storage: {
+          saved: true,
+          count: saveResult.count,
+          location: saveResult.location,
+          duration: saveResult.duration,
+          attempt: saveResult.attempt
+        }
+      };
+    } else {
+      return {
+        success: false,
+        error: saveResult.error || 'Failed to save todo',
+        storage: {
+          saved: false,
+          attempts: saveResult.attempts,
+          duration: saveResult.duration
+        }
+      };
+    }
+  }
+
   deleteTodo(id) {
     const numId = parseInt(id);
     if (isNaN(numId)) {
@@ -638,6 +682,11 @@ function complete_todo(id) {
   return core.completeTodo(id);
 }
 
+function incomplete_todo(id) {
+  const core = getGlobalTodoCore();
+  return core.incompleteTodo(id);
+}
+
 function delete_todo(id) {
   const core = getGlobalTodoCore();
   return core.deleteTodo(id);
@@ -688,6 +737,7 @@ module.exports = {
   add_todo,
   list_todos,
   complete_todo,
+  incomplete_todo,
   delete_todo,
   update_todo,
   get_todo_by_id,

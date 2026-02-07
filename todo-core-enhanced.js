@@ -364,6 +364,58 @@ class TodoCoreEnhanced {
   }
 
   /**
+   * Mark a completed todo item as incomplete (reactivate it)
+   */
+  async incompleteTodo(id) {
+    await this.ensureInitialized();
+
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    const todo = this.todos.find(t => t.id === numId);
+    if (!todo) {
+      return { success: false, error: `Todo with ID ${numId} not found` };
+    }
+
+    if (!todo.completed) {
+      return { success: true, message: `Todo #${todo.id} was already incomplete` };
+    }
+
+    todo.completed = false;
+    delete todo.completedAt;
+
+    const saveResult = await this.storage.saveData(this.todos);
+    if (saveResult.success) {
+      return {
+        success: true,
+        todo,
+        storage: {
+          saved: true,
+          count: saveResult.metadata.count,
+          location: saveResult.metadata.location,
+          duration: saveResult.metadata.duration,
+          attempt: saveResult.metadata.attempt
+        }
+      };
+    } else {
+      // Revert changes since save failed
+      todo.completed = true;
+      todo.completedAt = new Date().toISOString();
+      return {
+        success: false,
+        error: saveResult.error || 'Failed to save todo',
+        storage: {
+          saved: false,
+          attempts: saveResult.metadata.attempts,
+          duration: saveResult.metadata.duration
+        }
+      };
+    }
+  }
+
+  /**
    * Delete a todo item by ID or index
    * @param {number|string} identifier - The todo ID or index (1-based)
    * @param {Object} options - Options for deletion
@@ -1346,6 +1398,10 @@ class TodoCoreSync {
 
   completeTodo(id) {
     return this.originalCore.completeTodo(id);
+  }
+
+  incompleteTodo(id) {
+    return this.originalCore.incompleteTodo(id);
   }
 
   deleteTodo(id) {
