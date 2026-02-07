@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { runDeleteTests } = require("./test-delete");
+const { runArchiveTests } = require("./test-archive");
 
 console.log("Running todo application tests...");
 
@@ -12,7 +13,11 @@ console.log("✅ Basic tests passed!");
 console.log("\nRunning delete functionality tests...");
 const deleteTestsSuccess = runDeleteTests();
 
-if (deleteTestsSuccess) {
+// Run archive functionality tests
+console.log("\nRunning archive functionality tests...");
+const archiveTestsSuccess = runArchiveTests();
+
+if (deleteTestsSuccess && archiveTestsSuccess) {
   console.log("\n🎉 All tests passed!");
 } else {
   console.log("\n❌ Some tests failed!");

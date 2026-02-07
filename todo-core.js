@@ -43,6 +43,7 @@ class TodoCore {
       id: this.nextId++,
       description: description.trim(),
       completed: false,
+      archived: false,
       createdAt: new Date().toISOString()
     };
 
@@ -55,8 +56,18 @@ class TodoCore {
     }
   }
 
-  listTodos() {
-    return this.todos.slice();
+  listTodos(options = {}) {
+    let filteredTodos = this.todos.slice();
+
+    // Filter by archive status
+    if (options.includeArchived === false) {
+      filteredTodos = filteredTodos.filter(todo => !todo.archived);
+    } else if (options.archivedOnly === true) {
+      filteredTodos = filteredTodos.filter(todo => todo.archived);
+    }
+    // Default behavior includes all todos (archived and non-archived)
+
+    return filteredTodos;
   }
 
   completeTodo(id) {
@@ -76,6 +87,56 @@ class TodoCore {
 
     todo.completed = true;
     todo.completedAt = new Date().toISOString();
+
+    if (this.saveTodos()) {
+      return { success: true, todo };
+    } else {
+      return { success: false, error: 'Failed to save todo' };
+    }
+  }
+
+  archiveTodo(id) {
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    const todo = this.todos.find(t => t.id === numId);
+    if (!todo) {
+      return { success: false, error: `Todo with ID ${numId} not found` };
+    }
+
+    if (todo.archived) {
+      return { success: true, message: `Todo #${todo.id} was already archived` };
+    }
+
+    todo.archived = true;
+    todo.archivedAt = new Date().toISOString();
+
+    if (this.saveTodos()) {
+      return { success: true, todo };
+    } else {
+      return { success: false, error: 'Failed to save todo' };
+    }
+  }
+
+  unarchiveTodo(id) {
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    const todo = this.todos.find(t => t.id === numId);
+    if (!todo) {
+      return { success: false, error: `Todo with ID ${numId} not found` };
+    }
+
+    if (!todo.archived) {
+      return { success: true, message: `Todo #${todo.id} was not archived` };
+    }
+
+    todo.archived = false;
+    delete todo.archivedAt;
 
     if (this.saveTodos()) {
       return { success: true, todo };
@@ -255,6 +316,16 @@ function bulk_delete_completed() {
   return core.bulkDeleteCompleted();
 }
 
+function archive_todo(id) {
+  const core = new TodoCore();
+  return core.archiveTodo(id);
+}
+
+function unarchive_todo(id) {
+  const core = new TodoCore();
+  return core.unarchiveTodo(id);
+}
+
 module.exports = {
   TodoCore,
   add_todo,
@@ -262,5 +333,7 @@ module.exports = {
   complete_todo,
   delete_todo,
   delete_todo_by_index,
-  bulk_delete_completed
+  bulk_delete_completed,
+  archive_todo,
+  unarchive_todo
 };
