@@ -2,6 +2,7 @@
 
 const { TodoCoreEnhanced } = require('./todo-core-enhanced');
 const { StorageConfig } = require('./storage-config');
+const { ConfirmationUtil } = require('./confirmation-util');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
@@ -89,7 +90,48 @@ async function completeTodo(id) {
 
 // Delete a todo by ID or index
 async function deleteTodo(identifier, options = {}) {
-  const { useIndex = false } = options;
+  const { useIndex = false, force = false } = options;
+
+  // First, check if the todo exists and get its details without actually deleting it
+  const todos = await todoCore.listTodos();
+  let todo = null;
+
+  if (useIndex) {
+    const index = parseInt(identifier);
+    if (isNaN(index) || index < 1 || index > todos.length) {
+      console.error(`❌ Error: Invalid index. Index must be between 1 and ${todos.length}`);
+      console.error('💡 Use "node index.js list" to see todo positions (1-based indexing)');
+      return false;
+    }
+    todo = todos[index - 1]; // Convert 1-based to 0-based
+  } else {
+    const numId = parseInt(identifier);
+    if (isNaN(numId)) {
+      console.error('❌ Error: Invalid ID format');
+      console.error('💡 Use "node index.js list" to see available todo IDs');
+      return false;
+    }
+    todo = todos.find(t => t.id === numId);
+    if (!todo) {
+      console.error(`❌ Error: Todo with ID ${numId} not found`);
+      console.error('💡 Use "node index.js list" to see available todo IDs');
+      return false;
+    }
+  }
+
+  // Ask for confirmation before deleting
+  const confirmed = await ConfirmationUtil.confirmDelete('delete', todo, {
+    force,
+    showItems: true
+  });
+
+  if (!confirmed) {
+    ConfirmationUtil.showCancellationMessage('Delete operation');
+    ConfirmationUtil.showForceHelp(`delete ${identifier}${useIndex ? ' --index' : ''}`);
+    return false;
+  }
+
+  // Now perform the actual deletion
   const result = await todoCore.deleteTodo(identifier, { useIndex });
 
   if (!result.success) {
@@ -157,12 +199,14 @@ async function cleanCompletedTodos(options = {}) {
   console.log('');
 
   // Confirm deletion
-  if (!options.force) {
-    console.log('⚠️  This action is PERMANENT and cannot be undone!');
-    console.log('💡 Add --force to skip this confirmation: node index.js clean --force');
-    console.log('');
-    // For now, require --force flag
-    console.log('❌ Confirmation required. Add --force flag to proceed.');
+  const confirmed = await ConfirmationUtil.confirmDelete('clean', previewResult.toBeDeleted, {
+    force: options.force,
+    showItems: true
+  });
+
+  if (!confirmed) {
+    ConfirmationUtil.showCancellationMessage('Clean operation');
+    ConfirmationUtil.showForceHelp('clean');
     return false;
   }
 
@@ -219,12 +263,15 @@ async function clearAllTodos(options = {}) {
   console.log('');
 
   // Confirm deletion - this is a very destructive operation
-  if (!options.force) {
-    console.log('🚨 WARNING: This will delete ALL todos (both pending and completed)!');
-    console.log('⚠️  This action is PERMANENT and cannot be undone!');
-    console.log('💡 Add --force to confirm: node index.js clear --force');
-    console.log('');
-    console.log('❌ Confirmation required. Add --force flag to proceed.');
+  console.log('🚨 WARNING: This will delete ALL todos (both pending and completed)!');
+  const confirmed = await ConfirmationUtil.confirmDelete('clear', previewResult.toBeDeleted, {
+    force: options.force,
+    showItems: false  // Items already shown above
+  });
+
+  if (!confirmed) {
+    ConfirmationUtil.showCancellationMessage('Clear operation');
+    ConfirmationUtil.showForceHelp('clear');
     return false;
   }
 
@@ -258,8 +305,9 @@ function showDeleteHelp() {
   console.log('Delete a todo item permanently from your list by ID or position.');
   console.log('');
   console.log('📋 SYNTAX:');
-  console.log('  node index.js delete <id>           - Delete todo by ID (default)');
+  console.log('  node index.js delete <id>           - Delete todo by ID (with confirmation)');
   console.log('  node index.js delete <position> --index - Delete todo by position (1-based)');
+  console.log('  node index.js delete <id/position> --force - Skip confirmation prompt');
   console.log('  node index.js remove <id/position>  - Same as delete');
   console.log('  node index.js rm <id/position>      - Same as delete');
   console.log('');
@@ -267,6 +315,7 @@ function showDeleteHelp() {
   console.log('  <id>                                - The ID number of the todo to delete');
   console.log('  <position>                          - The position in the list (1-based indexing)');
   console.log('  --index                             - Use position-based deletion instead of ID');
+  console.log('  --force                             - Skip confirmation prompt (immediate deletion)');
   console.log('');
   console.log('✨ EXAMPLES:');
   console.log('  🔢 By ID (default behavior):');
@@ -279,11 +328,23 @@ function showDeleteHelp() {
   console.log('  node index.js delete 3 --index      - Delete third todo in list');
   console.log('  node index.js rm 2 --index          - Delete second todo in list');
   console.log('');
+  console.log('  ⚡ Skip Confirmation (with --force flag):');
+  console.log('  node index.js delete 5 --force      - Delete without confirmation');
+  console.log('  node index.js rm 1 --index --force  - Delete first todo without confirmation');
+  console.log('');
   console.log('🔄 DIFFERENCE BETWEEN ID AND POSITION:');
   console.log('  • ID: Unique identifier (e.g., #5, #7, #12) - never changes');
   console.log('  • Position: Current order in list (1st, 2nd, 3rd) - changes as you add/remove');
   console.log('  • Use ID when you know the specific todo number shown in list');
   console.log('  • Use position when you want to delete "the first todo" or "the last todo"');
+  console.log('');
+  console.log('🛡️  CONFIRMATION BEHAVIOR:');
+  console.log('  • By default, you will be asked to confirm before deleting any todo');
+  console.log('  • The app will show you what will be deleted before asking for confirmation');
+  console.log('  • Type "y" or "yes" to proceed with deletion');
+  console.log('  • Type "n" or "no" to cancel the operation');
+  console.log('  • Use --force flag to skip confirmation and delete immediately');
+  console.log('  • This helps prevent accidental deletions of important todos');
   console.log('');
   console.log('💡 TIPS:');
   console.log('  • Use "node index.js list" to see all todos with their IDs and positions');
@@ -320,16 +381,24 @@ function showCleanupHelp() {
   console.log('  node index.js purge                 - Same as clear');
   console.log('');
   console.log('✨ EXAMPLES:');
-  console.log('  node index.js clean                 - Remove all completed todos');
-  console.log('  node index.js cleanup               - Remove all completed todos');
-  console.log('  node index.js clear                 - Remove all todos (everything!)');
-  console.log('  node index.js purge                 - Remove all todos (everything!)');
+  console.log('  🔍 With Confirmation (default):');
+  console.log('  node index.js clean                 - Remove completed todos (with confirmation)');
+  console.log('  node index.js clear                 - Remove all todos (with confirmation)');
+  console.log('');
+  console.log('  ⚡ Skip Confirmation (--force flag):');
+  console.log('  node index.js clean --force         - Remove completed todos immediately');
+  console.log('  node index.js clear --force         - Remove all todos immediately');
+  console.log('');
+  console.log('🛡️  CONFIRMATION & SAFETY:');
+  console.log('  • You will be prompted to confirm before any deletion occurs');
+  console.log('  • The app shows exactly what will be deleted before asking confirmation');
+  console.log('  • Type "y" or "yes" to proceed, "n" or "no" to cancel');
+  console.log('  • Use --force flag to skip confirmation (immediate deletion)');
+  console.log('  • ALL cleanup operations are PERMANENT and cannot be undone');
   console.log('');
   console.log('⚠️  SAFETY WARNINGS:');
-  console.log('  • ALL cleanup operations are PERMANENT and cannot be undone');
   console.log('  • "clean/cleanup" only removes completed todos (✓ checked items)');
   console.log('  • "clear/purge" removes EVERYTHING - both pending and completed');
-  console.log('  • You will be asked to confirm before any deletion occurs');
   console.log('  • Use "list" command first to review what will be deleted');
   console.log('');
   console.log('💡 TIPS:');
@@ -808,10 +877,13 @@ function showUsage() {
   console.log('  add "description"                   - Add a new todo');
   console.log('  list                                - List all todos');
   console.log('  complete <id>                       - Mark todo as complete');
-  console.log('  delete <id>                         - Delete a todo by ID');
-  console.log('  delete <position> --index           - Delete a todo by position');
-  console.log('  clean                               - Delete all completed todos');
-  console.log('  clear                               - Delete ALL todos');
+  console.log('  delete <id>                         - Delete a todo by ID (with confirmation)');
+  console.log('  delete <position> --index           - Delete a todo by position (with confirmation)');
+  console.log('  delete <id> --force                 - Delete without confirmation');
+  console.log('  clean                               - Delete all completed todos (with confirmation)');
+  console.log('  clean --force                       - Delete completed todos without confirmation');
+  console.log('  clear                               - Delete ALL todos (with confirmation)');
+  console.log('  clear --force                       - Delete all todos without confirmation');
   console.log('  config <subcommand>                 - Manage storage configuration');
   console.log('  autosave                            - Show auto-save status and performance');
   console.log('  migrate                             - Show migration status or apply migrations');
@@ -1203,7 +1275,7 @@ async function main() {
         success = await completeTodo(parsed.id);
         break;
       case 'delete':
-        success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex });
+        success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex, force: parsed.force });
         break;
       case 'clean':
         success = await cleanCompletedTodos({ force: parsed.force });
