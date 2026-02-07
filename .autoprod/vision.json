@@ -1,0 +1,13 @@
+{
+  "identity": "A simple command-line todo list application.",
+  "northStar": "Help users track and complete their daily tasks.",
+  "priorities": [
+    "Add a todo item",
+    "List todos",
+    "Mark complete"
+  ],
+  "constraints": {},
+  "preferences": {},
+  "conversationHistory": [],
+  "lastUpdated": "2026-02-07T19:23:52.995Z"
+}

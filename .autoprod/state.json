@@ -1,0 +1,194 @@
+{
+  "queue": [
+    {
+      "id": "impl-local-1770492328332-0wmz5m",
+      "type": "implementation",
+      "title": "Add delete functionality to Todo data model",
+      "description": "Implement the core data layer functionality to remove todo items from storage. This foundational capability will support both ID-based and index-based deletion methods.\n\n**Technical Requirements:**\n- Add a `delete_todo()` method to the todo storage layer\n- Support deletion by unique ID (primary method)\n- Support deletion by index position (for user convenience)\n- Handle edge cases: invalid IDs, out-of-bounds indices, empty lists\n- Return appropriate success/error status\n- Ensure data persistence after deletion\n\n**Implementation Notes:**\n- If using file-based storage, ensure atomic writes\n- Maintain data integrity during deletion operations\n- Consider adding soft delete capability for future undo functionality",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-0wmz5m",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    },
+    {
+      "id": "impl-local-1770492328332-uezax6",
+      "type": "implementation",
+      "title": "Implement 'delete' command with ID support",
+      "description": "Create a command-line interface for deleting todo items by their unique ID. This provides the primary method for users to remove specific items from their todo list.\n\n**User Interface:**\n- Command format: `todo delete <id>`\n- Display confirmation message with item details before deletion\n- Show success/error messages with clear feedback\n- Handle invalid or non-existent IDs gracefully\n\n**Example Usage:**\n```\n$ todo delete 123\nDelete todo: \"Buy groceries\" (completed: false)? [y/N] y\nTodo item deleted successfully.\n\n$ todo delete 999\nError: Todo item with ID 999 not found.\n```\n\n**Dependencies:**\n- Requires completed delete functionality in data model",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-uezax6",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    },
+    {
+      "id": "impl-local-1770492328332-tjbkay",
+      "type": "implementation",
+      "title": "Add delete by index number support",
+      "description": "Extend the delete functionality to support deletion by index number (position in list). This provides an alternative, more intuitive way for users to delete items when working with numbered todo lists.\n\n**User Interface:**\n- Command format: `todo delete #<index>` or `todo delete <index>` (if index is clearly numeric)\n- Index should match the numbers shown in `todo list` output\n- Support 1-based indexing (matching list display)\n- Include same confirmation flow as ID-based deletion\n\n**Example Usage:**\n```\n$ todo list\n1. [ID: 123] Buy groceries\n2. [ID: 456] Walk the dog\n\n$ todo delete #2\nDelete todo: \"Walk the dog\" (completed: false)? [y/N] y\nTodo item deleted successfully.\n\n$ todo delete 5\nError: Todo item at index 5 not found. You have 1 items.\n```\n\n**Dependencies:**\n- Requires completed delete functionality in data model\n- Should integrate with existing delete command interface",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-tjbkay",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    },
+    {
+      "id": "impl-local-1770492328332-jm66zr",
+      "type": "implementation",
+      "title": "Add bulk delete functionality",
+      "description": "Enable users to delete multiple todo items in a single operation. This improves efficiency when cleaning up completed tasks or removing multiple obsolete items.\n\n**User Interface Options:**\n1. `todo delete --all-completed` - Delete all completed items\n2. `todo delete <id1> <id2> <id3>` - Delete multiple specific items\n3. `todo delete #<index1> #<index2>` - Delete by multiple indices\n\n**Example Usage:**\n```\n$ todo delete --all-completed\nDelete 3 completed todo items? [y/N] y\nDeleted 3 completed items successfully.\n\n$ todo delete 123 456 789\nDelete 3 todo items:\n- \"Buy groceries\"\n- \"Walk dog\"  \n- \"Call mom\"\n[y/N] y\nDeleted 3 items successfully.\n```\n\n**Dependencies:**\n- Requires basic delete functionality (ID and index)\n- Should reuse confirmation patterns from single delete",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-jm66zr",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    },
+    {
+      "id": "impl-local-1770492328332-7cyiq9",
+      "type": "implementation",
+      "title": "Add force delete option (skip confirmation)",
+      "description": "Provide a way for power users to bypass the confirmation prompt when deleting todo items. This improves workflow efficiency for users who want to script deletions or perform bulk operations.\n\n**User Interface:**\n- Add `--force` or `-f` flag to delete commands\n- Works with single, multiple, and bulk delete operations\n- Include warning in help text about data loss risk\n\n**Example Usage:**\n```\n$ todo delete 123 --force\nTodo item deleted successfully.\n\n$ todo delete --all-completed --force\nDeleted 3 completed items successfully.\n\n$ todo delete #1 #2 #3 -f\nDeleted 3 items successfully.\n```\n\n**Safety Considerations:**\n- Document the risk in help text\n- Consider adding a global confirmation setting for future\n- Ensure this works consistently across all delete variants\n\n**Dependencies:**\n- Requires all other delete functionality to be implemented first",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-7cyiq9",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    },
+    {
+      "id": "impl-local-1770492328332-uxyks9",
+      "type": "implementation",
+      "title": "Add force delete option (skip confirmation)",
+      "description": "Provide a way for power users to bypass the confirmation prompt when deleting todo items. This improves workflow efficiency for users who want to script deletions or perform bulk operations.\n\n**User Interface:**\n- Add `--force` or `-f` flag to delete commands\n- Works with single, multiple, and bulk delete operations\n- Include warning in help text about data loss risk\n\n**Example Usage:**\n```\n$ todo delete 123 --force\nTodo item deleted successfully.\n\n$ todo delete --all-completed --force\nDeleted 3 completed items successfully.\n\n$ todo delete #1 #2 #3 -f\nDeleted 3 items successfully.\n```\n\n**Safety Considerations:**\n- Document the risk in help text\n- Consider adding a global confirmation setting for future\n- Ensure this works consistently across all delete variants\n\n**Dependencies:**\n- Requires all other delete functionality to be implemented first",
+      "priority": "medium",
+      "linearIssueId": "local-1770492328332-uxyks9",
+      "createdAt": "2026-02-07T19:25:28.332Z"
+    }
+  ],
+  "pendingUxTests": [
+    {
+      "id": "local-1770492328332-3yu34z",
+      "name": "Delete todo by ID with confirmation",
+      "description": "",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "command://todo add 'Test item for deletion'"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo list"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Test item for deletion"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo delete 1"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Delete todo: \"Test item for deletion\""
+        },
+        {
+          "action": "type",
+          "value": "y"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Todo item deleted successfully"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo list"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "No todo items found"
+        }
+      ],
+      "relatedIssueId": "local-1770492251462"
+    },
+    {
+      "id": "local-1770492328332-lcw0z7",
+      "name": "Delete todo by index number",
+      "description": "",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "command://todo add 'First item'"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo add 'Second item'"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo add 'Third item'"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo list"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "1."
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "2."
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "3."
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo delete #2"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Delete todo: \"Second item\""
+        },
+        {
+          "action": "type",
+          "value": "y"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Todo item deleted successfully"
+        },
+        {
+          "action": "navigate",
+          "url": "command://todo list"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "First item"
+        },
+        {
+          "action": "assert",
+          "assert_type": "text",
+          "expected": "Third item"
+        }
+      ],
+      "relatedIssueId": "local-1770492251462"
+    }
+  ],
+  "completedWork": [
+    {
+      "id": "breakdown-local-1770492251462",
+      "type": "breakdown",
+      "title": "Break down: Delete Todo Items",
+      "description": "Enable users to remove individual todo items from their list. This includes both completed and uncompleted items. Users should be able to delete by item ID or index number, with clear feedback confirming the deletion. This is critical for keeping todo lists manageable and preventing clutter from accumulating over time.",
+      "priority": "high",
+      "linearIssueId": "local-1770492251462",
+      "createdAt": "2026-02-07T19:24:11.462Z"
+    }
+  ],
+  "completedToday": 1,
+  "tokensUsedToday": 4253,
+  "lastCheckpoint": 1770492328332,
+  "version": 1
+}
