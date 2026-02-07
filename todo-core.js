@@ -84,24 +84,105 @@ class TodoCore {
     }
   }
 
-  deleteTodo(id) {
-    const numId = parseInt(id);
-    if (isNaN(numId)) {
-      return { success: false, error: 'Invalid ID format' };
+  deleteTodo(identifier) {
+    // Handle edge case: empty todo list
+    if (this.todos.length === 0) {
+      return { success: false, error: 'No todos available to delete' };
     }
 
-    const todoIndex = this.todos.findIndex(t => t.id === numId);
-    if (todoIndex === -1) {
-      return { success: false, error: `Todo with ID ${numId} not found` };
+    // Handle edge case: null or undefined identifier
+    if (identifier === null || identifier === undefined) {
+      return { success: false, error: 'Identifier is required' };
     }
 
-    const todo = this.todos[todoIndex];
+    const idOrIndex = parseInt(identifier);
+    if (isNaN(idOrIndex)) {
+      return { success: false, error: 'Invalid identifier format - must be a number' };
+    }
+
+    let todoIndex = -1;
+    let todo = null;
+    let deletionMethod = '';
+
+    // Try ID-based deletion first (primary method)
+    todoIndex = this.todos.findIndex(t => t.id === idOrIndex);
+    if (todoIndex !== -1) {
+      todo = this.todos[todoIndex];
+      deletionMethod = 'ID';
+    } else {
+      // Try index-based deletion (0-based indexing for internal, 1-based for user convenience)
+      const userIndex = idOrIndex - 1; // Convert 1-based user input to 0-based array index
+
+      if (userIndex < 0 || userIndex >= this.todos.length) {
+        return {
+          success: false,
+          error: `Invalid position ${idOrIndex}. Available positions: 1-${this.todos.length}. Use "list" to see todos with their IDs and positions.`
+        };
+      }
+
+      todoIndex = userIndex;
+      todo = this.todos[todoIndex];
+      deletionMethod = 'position';
+    }
+
+    // Create a backup copy of the todo before deletion
+    const todoBackup = { ...todo };
+
+    // Perform the deletion
     this.todos.splice(todoIndex, 1);
 
+    // Attempt to save with error recovery
     if (this.saveTodos()) {
-      return { success: true, todo };
+      return {
+        success: true,
+        todo: todoBackup,
+        method: deletionMethod,
+        message: deletionMethod === 'ID'
+          ? `Todo deleted by ID ${todoBackup.id}`
+          : `Todo deleted by position ${idOrIndex} (ID: ${todoBackup.id})`
+      };
     } else {
-      return { success: false, error: 'Failed to save todo' };
+      // Restore the todo if save failed (rollback)
+      this.todos.splice(todoIndex, 0, todoBackup);
+      return { success: false, error: 'Failed to save changes - deletion rolled back' };
+    }
+  }
+
+  // Additional method for deletion by index specifically (0-based for API consistency)
+  deleteTodoByIndex(index) {
+    // Handle edge case: empty todo list
+    if (this.todos.length === 0) {
+      return { success: false, error: 'No todos available to delete' };
+    }
+
+    const arrayIndex = parseInt(index);
+    if (isNaN(arrayIndex)) {
+      return { success: false, error: 'Invalid index format - must be a number' };
+    }
+
+    if (arrayIndex < 0 || arrayIndex >= this.todos.length) {
+      return {
+        success: false,
+        error: `Index out of bounds. Valid range: 0-${this.todos.length - 1}`
+      };
+    }
+
+    const todo = this.todos[arrayIndex];
+    const todoBackup = { ...todo };
+
+    this.todos.splice(arrayIndex, 1);
+
+    if (this.saveTodos()) {
+      return {
+        success: true,
+        todo: todoBackup,
+        method: 'index',
+        message: `Todo deleted by index ${arrayIndex} (ID: ${todoBackup.id})`
+      };
+    } else {
+      // Restore the todo if save failed (rollback)
+      this.todos.splice(arrayIndex, 0, todoBackup);
+      return { success: false, error: 'Failed to save changes - deletion rolled back' };
     }
   }
 }
@@ -122,9 +203,14 @@ function complete_todo(id) {
   return core.completeTodo(id);
 }
 
-function delete_todo(id) {
+function delete_todo(identifier) {
   const core = new TodoCore();
-  return core.deleteTodo(id);
+  return core.deleteTodo(identifier);
+}
+
+function delete_todo_by_index(index) {
+  const core = new TodoCore();
+  return core.deleteTodoByIndex(index);
 }
 
 module.exports = {
@@ -132,5 +218,6 @@ module.exports = {
   add_todo,
   list_todos,
   complete_todo,
-  delete_todo
+  delete_todo,
+  delete_todo_by_index
 };
