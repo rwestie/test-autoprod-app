@@ -116,6 +116,50 @@ function showDeleteHelp() {
   console.log('  node index.js help <command>        - Get help for specific commands');
 }
 
+// Show detailed help for cleanup commands
+function showCleanupHelp() {
+  console.log('🧹 CLEANUP COMMANDS HELP');
+  console.log('');
+  console.log('Bulk operations to clean up your todo list efficiently.');
+  console.log('');
+  console.log('📋 AVAILABLE CLEANUP COMMANDS:');
+  console.log('');
+  console.log('🟢 Clean Completed Todos:');
+  console.log('  node index.js clean                 - Delete all completed todos');
+  console.log('  node index.js cleanup               - Same as clean');
+  console.log('');
+  console.log('🔴 Clear All Todos:');
+  console.log('  node index.js clear                 - Delete ALL todos (completed + pending)');
+  console.log('  node index.js purge                 - Same as clear');
+  console.log('');
+  console.log('✨ EXAMPLES:');
+  console.log('  node index.js clean                 - Remove all completed todos');
+  console.log('  node index.js cleanup               - Remove all completed todos');
+  console.log('  node index.js clear                 - Remove all todos (everything!)');
+  console.log('  node index.js purge                 - Remove all todos (everything!)');
+  console.log('');
+  console.log('⚠️  SAFETY WARNINGS:');
+  console.log('  • ALL cleanup operations are PERMANENT and cannot be undone');
+  console.log('  • "clean/cleanup" only removes completed todos (✓ checked items)');
+  console.log('  • "clear/purge" removes EVERYTHING - both pending and completed');
+  console.log('  • You will be asked to confirm before any deletion occurs');
+  console.log('  • Use "list" command first to review what will be deleted');
+  console.log('');
+  console.log('💡 TIPS:');
+  console.log('  • Use "clean" regularly to keep your list manageable');
+  console.log('  • Only use "clear" when starting fresh or for testing');
+  console.log('  • Check your list with "node index.js list" before cleanup');
+  console.log('  • Backup important todos elsewhere before bulk cleanup');
+  console.log('');
+  console.log('📊 WHAT GETS REMOVED:');
+  console.log('  clean/cleanup → Only todos marked as completed [✓]');
+  console.log('  clear/purge   → ALL todos (both [ ] pending and [✓] completed)');
+  console.log('');
+  console.log('📚 MORE HELP:');
+  console.log('  node index.js help                  - Show all available commands');
+  console.log('  node index.js help delete           - Help for single todo deletion');
+}
+
 // Show usage information
 function showUsage() {
   console.log('📝 Todo List Application');
@@ -128,6 +172,8 @@ function showUsage() {
   console.log('  list                                - List all todos');
   console.log('  complete <id>                       - Mark todo as complete');
   console.log('  delete <id>                         - Delete a todo');
+  console.log('  clean                               - Delete all completed todos');
+  console.log('  clear                               - Delete ALL todos');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
@@ -135,12 +181,16 @@ function showUsage() {
   console.log('  node index.js list                  - Show all todos');
   console.log('  node index.js complete 1            - Mark todo #1 as done');
   console.log('  node index.js delete 2              - Delete todo #2');
+  console.log('  node index.js clean                 - Remove all completed todos');
+  console.log('  node index.js clear                 - Remove ALL todos');
   console.log('  node index.js help delete           - Get detailed help for delete command');
   console.log('');
   console.log('COMMAND ALIASES:');
   console.log('  ls, list                            - List todos');
   console.log('  done, complete                      - Mark complete');
   console.log('  rm, remove, delete                  - Delete todos');
+  console.log('  clean, cleanup                      - Delete completed todos');
+  console.log('  clear, purge                        - Delete ALL todos');
   console.log('  -h, --help, help                    - Show help');
   console.log('');
   console.log('💡 TIP: Run "node index.js help <command>" for detailed help on any command.');
@@ -153,6 +203,12 @@ function showCommandHelp(command) {
     case 'remove':
     case 'rm':
       showDeleteHelp();
+      break;
+    case 'clean':
+    case 'cleanup':
+    case 'clear':
+    case 'purge':
+      showCleanupHelp();
       break;
     case 'add':
       console.log('➕ ADD COMMAND HELP');
@@ -201,7 +257,7 @@ function showCommandHelp(command) {
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete');
+      console.log('Available commands: add, list, complete, delete, clean, clear');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
@@ -229,6 +285,12 @@ function parseArguments() {
     case 'remove':
     case 'rm':
       return { command: 'delete', id: args[1] };
+    case 'clean':
+    case 'cleanup':
+      return { command: 'clean' };
+    case 'clear':
+    case 'purge':
+      return { command: 'clear' };
     case 'help':
     case '--help':
     case '-h':
@@ -307,6 +369,14 @@ function main() {
       break;
     case 'delete':
       success = deleteTodo(parsed.id);
+      break;
+    case 'clean':
+      console.log('🧹 Clean command (delete completed todos) - Coming soon!');
+      console.log('💡 Use "node index.js help clean" to see detailed documentation.');
+      break;
+    case 'clear':
+      console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
+      console.log('💡 Use "node index.js help clear" to see detailed documentation.');
       break;
     case 'help':
       if (parsed.subcommand) {
