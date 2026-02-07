@@ -374,13 +374,86 @@ class Todo {
 
   /**
    * Check if the todo can be safely deleted
-   * @returns {boolean} True if the todo can be deleted
+   * @param {Object} options - Delete options
+   * @param {boolean} options.force - Force deletion even if protected
+   * @param {string[]} options.allowedRoles - Roles allowed to delete this todo
+   * @returns {Object} Result with canDelete boolean and reason
    */
-  canBeDeleted() {
-    // All todos can be deleted by default
-    // This method can be extended for future business rules
-    // e.g., prevent deletion of certain high-priority items, etc.
-    return true;
+  canBeDeleted(options = {}) {
+    const { force = false, allowedRoles = [] } = options;
+
+    // If force deletion is requested, allow it
+    if (force) {
+      return { canDelete: true, reason: null };
+    }
+
+    // Check for deletion protection rules
+    const protectionChecks = this.getDeleteProtectionChecks();
+
+    for (const check of protectionChecks) {
+      if (!check.passes) {
+        return { canDelete: false, reason: check.reason };
+      }
+    }
+
+    // Check role-based permissions if specified
+    if (allowedRoles.length > 0 && this.hasTag('restricted')) {
+      if (!allowedRoles.some(role => this.tags.includes(`role:${role}`))) {
+        return {
+          canDelete: false,
+          reason: 'Insufficient permissions to delete restricted todo'
+        };
+      }
+    }
+
+    return { canDelete: true, reason: null };
+  }
+
+  /**
+   * Get delete protection checks for this todo
+   * @returns {Array} Array of protection check results
+   */
+  getDeleteProtectionChecks() {
+    const checks = [];
+
+    // Protect high priority overdue todos
+    if (this.priority === 'high' && this.isOverdue() && !this.completed) {
+      checks.push({
+        name: 'high_priority_overdue',
+        passes: false,
+        reason: 'Cannot delete overdue high-priority todo. Complete it first or use force delete.'
+      });
+    }
+
+    // Protect todos with critical tags
+    if (this.hasTag('critical') || this.hasTag('important')) {
+      checks.push({
+        name: 'critical_tag',
+        passes: false,
+        reason: 'Todo marked as critical cannot be deleted without confirmation.'
+      });
+    }
+
+    // Protect recently created todos (within 1 hour) to prevent accidental deletion
+    const hoursSinceCreated = (new Date() - new Date(this.createdAt)) / (1000 * 60 * 60);
+    if (hoursSinceCreated < 1 && !this.completed) {
+      checks.push({
+        name: 'recently_created',
+        passes: false,
+        reason: 'Todo created less than 1 hour ago. Wait or use force delete to prevent accidental deletion.'
+      });
+    }
+
+    // All checks passed if no failing checks
+    if (checks.length === 0) {
+      checks.push({
+        name: 'safe_to_delete',
+        passes: true,
+        reason: null
+      });
+    }
+
+    return checks;
   }
 
   /**
@@ -413,51 +486,267 @@ class Todo {
       isOverdue: this.isOverdue(),
       hasHighPriority: this.priority === 'high',
       hasWorkTag: this.tags.includes('work'),
-      daysSinceCreated: Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24))
+      daysSinceCreated: Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24)),
+      // Enhanced delete metadata
+      deleteRisk: this.calculateDeleteRisk(),
+      deletionImpact: this.assessDeletionImpact(),
+      suggestedAction: this.getSuggestedDeletionAction(),
+      backupRecommended: this.isBackupRecommended()
     };
+  }
+
+  /**
+   * Calculate the risk level of deleting this todo
+   * @returns {string} Risk level: 'low', 'medium', 'high'
+   */
+  calculateDeleteRisk() {
+    let riskScore = 0;
+
+    // High priority increases risk
+    if (this.priority === 'high') riskScore += 3;
+    else if (this.priority === 'medium') riskScore += 1;
+
+    // Overdue todos are risky to delete
+    if (this.isOverdue() && !this.completed) riskScore += 3;
+
+    // Critical tags increase risk
+    if (this.hasTag('critical') || this.hasTag('important')) riskScore += 3;
+    if (this.hasTag('urgent')) riskScore += 2;
+
+    // Work-related todos have moderate risk
+    if (this.hasTag('work') || this.hasTag('project')) riskScore += 1;
+
+    // Due soon increases risk
+    const daysUntilDue = this.getDaysUntilDue();
+    if (daysUntilDue !== null && daysUntilDue <= 1) riskScore += 2;
+
+    // Incomplete todos are riskier to delete
+    if (!this.completed) riskScore += 1;
+
+    if (riskScore >= 5) return 'high';
+    if (riskScore >= 2) return 'medium';
+    return 'low';
+  }
+
+  /**
+   * Assess the impact of deleting this todo
+   * @returns {Object} Impact assessment
+   */
+  assessDeletionImpact() {
+    return {
+      dataLoss: this.assessDataLoss(),
+      workflowImpact: this.assessWorkflowImpact(),
+      recoveryDifficulty: this.assessRecoveryDifficulty()
+    };
+  }
+
+  /**
+   * Assess the data loss from deleting this todo
+   * @returns {string} Data loss level: 'minimal', 'moderate', 'significant'
+   */
+  assessDataLoss() {
+    let score = 0;
+
+    // Long descriptions contain more information
+    if (this.description.length > 100) score += 2;
+    else if (this.description.length > 50) score += 1;
+
+    // Multiple tags indicate more organizational data
+    if (this.tags.length > 3) score += 2;
+    else if (this.tags.length > 1) score += 1;
+
+    // Due dates add temporal information
+    if (this.dueDate) score += 1;
+
+    // Completion data has value
+    if (this.completed && this.completedAt) score += 1;
+
+    if (score >= 4) return 'significant';
+    if (score >= 2) return 'moderate';
+    return 'minimal';
+  }
+
+  /**
+   * Assess workflow impact of deletion
+   * @returns {string} Workflow impact: 'none', 'minor', 'major'
+   */
+  assessWorkflowImpact() {
+    // High priority overdue items have major workflow impact
+    if (this.priority === 'high' && this.isOverdue() && !this.completed) {
+      return 'major';
+    }
+
+    // Critical or work-related todos have moderate impact
+    if (this.hasTag('critical') || this.hasTag('work') || this.hasTag('project')) {
+      return 'minor';
+    }
+
+    // Due soon has impact
+    const daysUntilDue = this.getDaysUntilDue();
+    if (daysUntilDue !== null && daysUntilDue <= 2 && !this.completed) {
+      return 'minor';
+    }
+
+    return 'none';
+  }
+
+  /**
+   * Assess difficulty of recovering this todo if deleted
+   * @returns {string} Recovery difficulty: 'easy', 'moderate', 'difficult'
+   */
+  assessRecoveryDifficulty() {
+    // Generic or short descriptions are hard to recreate
+    if (this.description.length < 20) return 'difficult';
+
+    // Todos with specific dates or many tags are moderately difficult
+    if (this.dueDate || this.tags.length > 2) return 'moderate';
+
+    return 'easy';
+  }
+
+  /**
+   * Get suggested action for deletion
+   * @returns {string} Suggested action
+   */
+  getSuggestedDeletionAction() {
+    const risk = this.calculateDeleteRisk();
+
+    if (risk === 'high') {
+      return this.completed ? 'Archive instead of delete' : 'Complete before deleting';
+    }
+
+    if (risk === 'medium') {
+      if (this.isOverdue() && !this.completed) {
+        return 'Review and update due date or complete';
+      }
+      return 'Consider archiving or completing first';
+    }
+
+    return 'Safe to delete';
+  }
+
+  /**
+   * Check if backup is recommended before deletion
+   * @returns {boolean} True if backup is recommended
+   */
+  isBackupRecommended() {
+    const metadata = this.assessDeletionImpact();
+    return (
+      this.calculateDeleteRisk() === 'high' ||
+      metadata.dataLoss === 'significant' ||
+      metadata.workflowImpact === 'major'
+    );
   }
 
   /**
    * Check if this todo should be included in bulk delete operations
    * @param {string} operation - Type of bulk operation ('clean', 'clear', 'overdue', etc.)
-   * @returns {boolean} True if todo should be deleted in this operation
+   * @param {Object} options - Additional options for bulk operations
+   * @returns {Object} Result with shouldDelete boolean and reason
    */
-  shouldBeIncludedInBulkDelete(operation) {
+  shouldBeIncludedInBulkDelete(operation, options = {}) {
+    const { respectProtection = true, includeProtected = false } = options;
+
+    // Check protection rules if enabled
+    if (respectProtection && !includeProtected) {
+      const deleteCheck = this.canBeDeleted();
+      if (!deleteCheck.canDelete) {
+        return {
+          shouldDelete: false,
+          reason: `Protected: ${deleteCheck.reason}`,
+          operation
+        };
+      }
+    }
+
+    let shouldDelete = false;
+    let reason = null;
+
     switch (operation.toLowerCase()) {
       case 'clean':
       case 'cleanup':
         // Only delete completed todos
-        return this.completed;
+        shouldDelete = this.completed;
+        reason = shouldDelete ? 'Completed todo eligible for cleanup' : 'Todo not completed';
+        break;
 
       case 'clear':
       case 'purge':
         // Delete all todos
-        return true;
+        shouldDelete = true;
+        reason = 'All todos eligible for purge operation';
+        break;
 
       case 'overdue':
         // Delete overdue incomplete todos
-        return !this.completed && this.isOverdue();
+        shouldDelete = !this.completed && this.isOverdue();
+        reason = shouldDelete ? 'Overdue incomplete todo' : 'Todo not overdue or already completed';
+        break;
 
       case 'completed':
         // Delete only completed todos (same as clean)
-        return this.completed;
+        shouldDelete = this.completed;
+        reason = shouldDelete ? 'Completed todo' : 'Todo not completed';
+        break;
 
       case 'pending':
         // Delete only pending todos
-        return !this.completed;
+        shouldDelete = !this.completed;
+        reason = shouldDelete ? 'Pending todo' : 'Todo already completed';
+        break;
 
       case 'low-priority':
         // Delete low priority todos
-        return this.priority === 'low';
+        shouldDelete = this.priority === 'low';
+        reason = shouldDelete ? 'Low priority todo' : 'Todo priority is not low';
+        break;
 
       case 'old':
         // Delete todos older than 30 days
         const daysSinceCreated = Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24));
-        return daysSinceCreated > 30;
+        shouldDelete = daysSinceCreated > 30;
+        reason = shouldDelete ? `Todo is ${daysSinceCreated} days old` : 'Todo is not old enough (< 30 days)';
+        break;
+
+      case 'inactive':
+        // Delete todos without recent activity (no completion within 60 days)
+        const daysSinceActivity = this.completed && this.completedAt ?
+          Math.floor((new Date() - new Date(this.completedAt)) / (1000 * 60 * 60 * 24)) :
+          Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24));
+        shouldDelete = daysSinceActivity > 60;
+        reason = shouldDelete ? `No activity for ${daysSinceActivity} days` : 'Recent activity detected';
+        break;
+
+      case 'safe':
+        // Only delete todos with low delete risk
+        shouldDelete = this.calculateDeleteRisk() === 'low';
+        reason = shouldDelete ? 'Low risk todo safe for deletion' : 'Todo has elevated delete risk';
+        break;
+
+      case 'test':
+      case 'demo':
+        // Delete todos that appear to be test data
+        const testWords = ['test', 'demo', 'example', 'sample', 'placeholder'];
+        const hasTestWord = testWords.some(word =>
+          this.description.toLowerCase().includes(word) ||
+          this.tags.some(tag => tag.toLowerCase().includes(word))
+        );
+        shouldDelete = hasTestWord;
+        reason = shouldDelete ? 'Appears to be test/demo data' : 'Not identified as test data';
+        break;
 
       default:
-        return false;
+        shouldDelete = false;
+        reason = `Unknown bulk delete operation: ${operation}`;
     }
+
+    return {
+      shouldDelete,
+      reason,
+      operation,
+      riskLevel: this.calculateDeleteRisk(),
+      protectionChecks: respectProtection ? this.getDeleteProtectionChecks() : []
+    };
   }
 
   /**
@@ -593,7 +882,236 @@ class Todo {
   }
 
   /**
-   * Get available bulk delete operations
+   * Mark todo as soft deleted (for trash/recycle bin functionality)
+   * @returns {Todo} Returns this instance for method chaining
+   */
+  markAsDeleted() {
+    if (!this.hasTag('deleted')) {
+      this.addTag('deleted');
+    }
+    this.addTag(`deleted-at:${new Date().toISOString()}`);
+    return this;
+  }
+
+  /**
+   * Restore todo from soft deleted state
+   * @returns {Todo} Returns this instance for method chaining
+   */
+  restoreFromDeleted() {
+    this.removeTag('deleted');
+    // Remove all deletion timestamp tags
+    this.tags = this.tags.filter(tag => !tag.startsWith('deleted-at:'));
+    return this;
+  }
+
+  /**
+   * Check if todo is soft deleted
+   * @returns {boolean} True if todo is marked as deleted
+   */
+  isDeleted() {
+    return this.hasTag('deleted');
+  }
+
+  /**
+   * Get deletion timestamp for soft deleted todos
+   * @returns {string|null} Deletion timestamp or null if not deleted
+   */
+  getDeletedAt() {
+    const deletedTag = this.tags.find(tag => tag.startsWith('deleted-at:'));
+    return deletedTag ? deletedTag.substring('deleted-at:'.length) : null;
+  }
+
+  /**
+   * Check if soft deleted todo can be permanently deleted
+   * @param {number} retentionDays - Days to retain deleted todos
+   * @returns {boolean} True if todo can be permanently deleted
+   */
+  canBePermanentlyDeleted(retentionDays = 30) {
+    const deletedAt = this.getDeletedAt();
+    if (!deletedAt) return false;
+
+    const daysSinceDeletion = Math.floor((new Date() - new Date(deletedAt)) / (1000 * 60 * 60 * 24));
+    return daysSinceDeletion >= retentionDays;
+  }
+
+  /**
+   * Get enhanced delete impact analysis
+   * @param {Object} context - Additional context for analysis
+   * @returns {Object} Comprehensive delete impact report
+   */
+  getDeleteImpactAnalysis(context = {}) {
+    const { relatedTodos = [], userProfile = null } = context;
+
+    return {
+      todo: this.toObject(),
+      riskAssessment: {
+        level: this.calculateDeleteRisk(),
+        checks: this.getDeleteProtectionChecks(),
+        score: this.getDeleteRiskScore()
+      },
+      impactAnalysis: this.assessDeletionImpact(),
+      recommendations: {
+        action: this.getSuggestedDeletionAction(),
+        alternatives: this.getDeleteAlternatives(),
+        backupRecommended: this.isBackupRecommended()
+      },
+      metadata: {
+        deleteMetadata: this.getDeleteMetadata(),
+        relatedCount: relatedTodos.length,
+        userContext: userProfile ? this.getUserDeleteContext(userProfile) : null
+      },
+      recovery: {
+        difficulty: this.assessRecoveryDifficulty(),
+        requirements: this.getRecoveryRequirements()
+      }
+    };
+  }
+
+  /**
+   * Calculate numerical delete risk score
+   * @returns {number} Risk score (0-10, higher is riskier)
+   */
+  getDeleteRiskScore() {
+    let score = 0;
+
+    // Priority scoring
+    if (this.priority === 'high') score += 3;
+    else if (this.priority === 'medium') score += 1;
+
+    // Overdue penalty
+    if (this.isOverdue() && !this.completed) score += 3;
+
+    // Critical tags
+    if (this.hasTag('critical')) score += 3;
+    if (this.hasTag('important')) score += 2;
+    if (this.hasTag('urgent')) score += 2;
+
+    // Work context
+    if (this.hasTag('work') || this.hasTag('project')) score += 1;
+
+    // Due date proximity
+    const daysUntilDue = this.getDaysUntilDue();
+    if (daysUntilDue !== null) {
+      if (daysUntilDue <= 0) score += 2;
+      else if (daysUntilDue <= 1) score += 1;
+    }
+
+    // Incomplete status
+    if (!this.completed) score += 1;
+
+    return Math.min(score, 10); // Cap at 10
+  }
+
+  /**
+   * Get alternative actions to deletion
+   * @returns {Array} Array of alternative actions
+   */
+  getDeleteAlternatives() {
+    const alternatives = [];
+
+    if (!this.completed) {
+      alternatives.push({
+        action: 'complete',
+        description: 'Mark as completed instead of deleting',
+        benefit: 'Preserves record of accomplishment'
+      });
+    }
+
+    if (this.isOverdue()) {
+      alternatives.push({
+        action: 'reschedule',
+        description: 'Update due date to future',
+        benefit: 'Keeps todo active with realistic timeline'
+      });
+    }
+
+    if (this.priority === 'high') {
+      alternatives.push({
+        action: 'lower_priority',
+        description: 'Reduce priority to medium or low',
+        benefit: 'Reduces urgency while keeping todo'
+      });
+    }
+
+    alternatives.push({
+      action: 'archive',
+      description: 'Archive instead of delete',
+      benefit: 'Preserves data while removing from active list'
+    });
+
+    if (!this.hasTag('archived')) {
+      alternatives.push({
+        action: 'soft_delete',
+        description: 'Soft delete for potential recovery',
+        benefit: 'Allows restoration within retention period'
+      });
+    }
+
+    return alternatives;
+  }
+
+  /**
+   * Get requirements for recovering this todo
+   * @returns {Object} Recovery requirements
+   */
+  getRecoveryRequirements() {
+    return {
+      minBackupData: ['id', 'description', 'createdAt'],
+      recommendedData: ['priority', 'tags', 'dueDate'],
+      complexityFactors: {
+        hasComplexDescription: this.description.length > 100,
+        hasMultipleTags: this.tags.length > 2,
+        hasDueDate: !!this.dueDate,
+        hasSpecialPriority: this.priority !== 'medium'
+      },
+      estimatedRecoveryTime: this.estimateRecoveryTime()
+    };
+  }
+
+  /**
+   * Estimate time required to manually recreate this todo
+   * @returns {string} Estimated recovery time
+   */
+  estimateRecoveryTime() {
+    let minutes = 1; // Base time
+
+    // Complex description takes longer
+    if (this.description.length > 100) minutes += 2;
+    else if (this.description.length > 50) minutes += 1;
+
+    // Multiple tags take time to recreate
+    minutes += this.tags.length * 0.5;
+
+    // Due dates require thought
+    if (this.dueDate) minutes += 1;
+
+    if (minutes <= 2) return '1-2 minutes';
+    if (minutes <= 5) return '3-5 minutes';
+    return '5+ minutes';
+  }
+
+  /**
+   * Get user-specific delete context
+   * @param {Object} userProfile - User profile information
+   * @returns {Object} User-specific context
+   */
+  getUserDeleteContext(userProfile) {
+    return {
+      userPreferences: {
+        confirmHighRisk: userProfile.confirmHighRiskDeletes || true,
+        autoArchive: userProfile.autoArchiveInsteadDelete || false,
+        retentionDays: userProfile.deletedTodoRetention || 30
+      },
+      statistics: {
+        totalDeleted: userProfile.totalTodosDeleted || 0,
+        avgDeletesPerDay: userProfile.avgDeletesPerDay || 0,
+        mostDeletedPriority: userProfile.mostDeletedPriority || 'low'
+      }
+    };
+  }
+
+  /**
+   * Get available bulk delete operations with enhanced metadata
    * @returns {Object} Available bulk delete operations with descriptions
    */
   static getBulkDeleteOperations() {
@@ -603,35 +1121,80 @@ class Todo {
         aliases: ['cleanup'],
         description: 'Delete all completed todos',
         filter: 'completed',
-        safety: 'medium'
+        safety: 'medium',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Removes completed todos, preserves work history'
       },
       clear: {
         name: 'clear',
         aliases: ['purge'],
         description: 'Delete ALL todos (completed and pending)',
         filter: 'all',
-        safety: 'high'
+        safety: 'high',
+        riskLevel: 'high',
+        confirmationRequired: true,
+        estimatedImpact: 'Removes all todos permanently - use with extreme caution'
       },
       overdue: {
         name: 'overdue',
         aliases: ['expired'],
         description: 'Delete overdue incomplete todos',
         filter: 'overdue',
-        safety: 'medium'
+        safety: 'medium',
+        riskLevel: 'medium',
+        confirmationRequired: true,
+        estimatedImpact: 'Removes stale overdue items that may no longer be relevant'
       },
       old: {
         name: 'old',
         aliases: ['archive'],
         description: 'Delete todos older than 30 days',
         filter: 'old',
-        safety: 'medium'
+        safety: 'medium',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Removes old todos to keep list current'
       },
       'low-priority': {
         name: 'low-priority',
         aliases: ['low'],
         description: 'Delete low priority todos',
         filter: 'priority',
-        safety: 'low'
+        safety: 'low',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Removes less important todos to focus on priorities'
+      },
+      inactive: {
+        name: 'inactive',
+        aliases: ['stale'],
+        description: 'Delete todos with no activity for 60+ days',
+        filter: 'activity',
+        safety: 'medium',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Removes dormant todos that are likely abandoned'
+      },
+      safe: {
+        name: 'safe',
+        aliases: ['low-risk'],
+        description: 'Delete only low-risk todos',
+        filter: 'risk',
+        safety: 'low',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Conservative cleanup of todos with minimal impact'
+      },
+      test: {
+        name: 'test',
+        aliases: ['demo', 'sample'],
+        description: 'Delete test and demo todos',
+        filter: 'test-data',
+        safety: 'low',
+        riskLevel: 'low',
+        confirmationRequired: false,
+        estimatedImpact: 'Removes non-production test data'
       }
     };
   }
