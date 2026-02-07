@@ -390,6 +390,266 @@ async function showStorageStatus() {
   console.log('  TODO_LOG_LEVEL                      - Logging level (debug/info/warn/error)');
 }
 
+// Show migration status and information
+async function showMigrationStatus() {
+  console.log('🔄 MIGRATION STATUS');
+  console.log('');
+
+  const status = await todoCore.getMigrationStatus();
+
+  console.log('📊 DATA VERSION:');
+  console.log(`  Current version: ${status.currentVersion}`);
+  console.log(`  Latest version: ${status.latestVersion}`);
+  console.log(`  Status: ${status.isLatest ? '✅ Up to date' : '⚠️  Migration available'}`);
+  console.log('');
+
+  if (!status.isLatest) {
+    console.log('🔄 AVAILABLE MIGRATIONS:');
+    console.log(`  Migrations needed: ${status.availableMigrations}`);
+    console.log('  Migration path:');
+    status.migrationPath.forEach(path => {
+      console.log(`    ${path}`);
+    });
+    console.log('');
+
+    console.log('💡 TO MIGRATE:');
+    console.log('  node index.js migrate              - Apply all available migrations');
+    console.log('  node index.js backup create        - Create backup before migration');
+  }
+
+  console.log(`📦 BACKUP STATUS:`);
+  console.log(`  Migration backups: ${status.availableBackups}`);
+
+  // Show recent migration backups
+  const migrationBackups = todoCore.getAvailableMigrationBackups();
+  if (migrationBackups.length > 0) {
+    console.log('');
+    console.log('📋 RECENT MIGRATION BACKUPS:');
+    migrationBackups.slice(0, 3).forEach((backup, index) => {
+      console.log(`  ${index + 1}. ${backup.filename} (${backup.originalVersion} -> ${backup.targetVersion})`);
+    });
+  }
+}
+
+// Perform data migration
+async function performMigration(targetVersion = null) {
+  console.log('🔄 STARTING DATA MIGRATION');
+  console.log('');
+
+  const migrationResult = await todoCore.migrateData(targetVersion);
+
+  if (migrationResult.success) {
+    if (migrationResult.migrations.length === 0) {
+      console.log('✅ No migration needed - data is already up to date');
+    } else {
+      console.log(`✅ ${migrationResult.message}`);
+      console.log('');
+      console.log('📋 APPLIED MIGRATIONS:');
+      migrationResult.migrations.forEach((migration, index) => {
+        console.log(`  ${index + 1}. ${migration.from} -> ${migration.to} (${migration.timestamp})`);
+      });
+
+      if (migrationResult.saveError) {
+        console.log('');
+        console.log(`⚠️  Warning: Migration succeeded but save failed: ${migrationResult.saveError}`);
+      }
+    }
+  } else {
+    console.error(`❌ Migration failed: ${migrationResult.error}`);
+    if (migrationResult.partialMigrations) {
+      console.log('');
+      console.log('⚠️  Partial migrations applied:');
+      migrationResult.partialMigrations.forEach((migration, index) => {
+        console.log(`  ${index + 1}. ${migration.from} -> ${migration.to}`);
+      });
+    }
+    return false;
+  }
+
+  return true;
+}
+
+// Create manual backup
+async function createBackup(reason = 'manual') {
+  console.log('💾 CREATING BACKUP');
+  console.log('');
+
+  const backupResult = await todoCore.createBackup(reason);
+
+  if (backupResult.success) {
+    console.log(`✅ ${backupResult.message}`);
+    console.log(`📁 Backup location: ${backupResult.filename}`);
+    console.log(`📊 Backup contains: ${backupResult.todoCount} todo(s)`);
+    console.log(`🕒 Created: ${backupResult.timestamp}`);
+  } else {
+    console.error(`❌ Failed to create backup: ${backupResult.error}`);
+    return false;
+  }
+
+  return true;
+}
+
+// List available backups
+async function listBackups() {
+  console.log('📦 AVAILABLE BACKUPS');
+  console.log('');
+
+  const backupsResult = todoCore.getAvailableBackups();
+
+  if (!backupsResult.success) {
+    console.error(`❌ Failed to list backups: ${backupsResult.error}`);
+    return false;
+  }
+
+  const backups = backupsResult.backups;
+
+  if (backups.length === 0) {
+    console.log('No backups found.');
+    console.log('');
+    console.log('💡 To create a backup:');
+    console.log('  node index.js backup create');
+    return true;
+  }
+
+  console.log(`📊 SUMMARY: ${backups.length} backup(s) found`);
+  console.log(`  Automatic: ${backupsResult.automaticBackups}`);
+  console.log(`  Manual: ${backupsResult.manualBackups}`);
+  console.log(`  Migration: ${backupsResult.migrationBackups}`);
+  console.log('');
+
+  console.log('📋 BACKUP LIST:');
+  backups.forEach((backup, index) => {
+    const typeIcon = {
+      automatic: '🔄',
+      manual: '👤',
+      migration: '⬆️'
+    }[backup.type] || '📦';
+
+    console.log(`  ${index + 1}. ${typeIcon} ${backup.filename}`);
+    console.log(`     ${backup.description}`);
+    console.log(`     Date: ${new Date(backup.timestamp).toLocaleString()}`);
+    console.log(`     Size: ${backup.size} bytes | Todos: ${backup.todoCount}`);
+    console.log('');
+  });
+
+  console.log('💡 To restore from a backup:');
+  console.log('  node index.js backup restore <filename>');
+
+  return true;
+}
+
+// Restore from backup
+async function restoreFromBackup(filename) {
+  if (!filename) {
+    console.error('❌ Error: Backup filename is required');
+    console.error('Usage: node index.js backup restore <filename>');
+    console.error('Use "node index.js backup list" to see available backups');
+    return false;
+  }
+
+  console.log(`🔄 RESTORING FROM BACKUP: ${filename}`);
+  console.log('');
+
+  // Find backup path
+  const backupsResult = todoCore.getAvailableBackups();
+  if (!backupsResult.success) {
+    console.error(`❌ Failed to list backups: ${backupsResult.error}`);
+    return false;
+  }
+
+  const backup = backupsResult.backups.find(b => b.filename === filename);
+  if (!backup) {
+    console.error(`❌ Backup file not found: ${filename}`);
+    console.error('Use "node index.js backup list" to see available backups');
+    return false;
+  }
+
+  const restoreResult = await todoCore.restoreFromSpecificBackup(backup.path);
+
+  if (restoreResult.success) {
+    console.log(`✅ ${restoreResult.message}`);
+    console.log(`📊 Restored: ${restoreResult.restoredCount} todo(s)`);
+
+    if (restoreResult.metadata.preRestoreBackup) {
+      console.log(`💾 Pre-restore backup created: ${restoreResult.metadata.preRestoreBackup}`);
+    }
+
+    if (restoreResult.saveError) {
+      console.log(`⚠️  Warning: Restore succeeded but save failed: ${restoreResult.saveError}`);
+    }
+  } else {
+    console.error(`❌ Restore failed: ${restoreResult.error}`);
+    return false;
+  }
+
+  return true;
+}
+
+// Export todos
+async function exportTodos(format = 'json', filename = null) {
+  console.log(`📤 EXPORTING TODOS TO ${format.toUpperCase()}`);
+  console.log('');
+
+  const options = {};
+  if (filename) {
+    options.exportDir = path.dirname(filename);
+    options.filename = path.basename(filename);
+  }
+
+  const exportResult = await todoCore.exportTodos(format, options);
+
+  if (exportResult.success) {
+    console.log(`✅ ${exportResult.message}`);
+    console.log(`📁 Export file: ${exportResult.filename}`);
+    console.log(`📊 Exported: ${exportResult.todoCount} todo(s)`);
+    console.log(`💽 File size: ${exportResult.size} bytes`);
+    console.log(`📍 Location: ${exportResult.exportPath}`);
+  } else {
+    console.error(`❌ Export failed: ${exportResult.error}`);
+    return false;
+  }
+
+  return true;
+}
+
+// Import todos
+async function importTodos(filePath, options = {}) {
+  if (!filePath) {
+    console.error('❌ Error: Import file path is required');
+    console.error('Usage: node index.js import <filepath> [--replace]');
+    return false;
+  }
+
+  console.log(`📥 IMPORTING TODOS FROM: ${filePath}`);
+  console.log('');
+
+  const importResult = await todoCore.importTodos(filePath, options);
+
+  if (importResult.success) {
+    console.log(`✅ ${importResult.message}`);
+
+    if (importResult.skippedCount > 0) {
+      console.log(`⚠️  Skipped ${importResult.skippedCount} invalid entries`);
+    }
+
+    if (importResult.saveError) {
+      console.log(`⚠️  Warning: Import succeeded but save failed: ${importResult.saveError}`);
+    }
+
+    console.log('');
+    console.log('📊 IMPORT SUMMARY:');
+    console.log(`  Imported: ${importResult.importedCount} todo(s)`);
+    if (importResult.skippedCount > 0) {
+      console.log(`  Skipped: ${importResult.skippedCount} invalid entries`);
+    }
+  } else {
+    console.error(`❌ Import failed: ${importResult.error}`);
+    return false;
+  }
+
+  return true;
+}
+
 // Show usage information
 function showUsage() {
   console.log('📝 Todo List Application');
@@ -410,6 +670,10 @@ function showUsage() {
   console.log('  clear                               - Delete ALL todos');
   console.log('  config <subcommand>                 - Manage storage configuration');
   console.log('  autosave                            - Show auto-save status and performance');
+  console.log('  migrate                             - Show migration status or apply migrations');
+  console.log('  backup <subcommand>                 - Create, list, or restore backups');
+  console.log('  export <format> [filename]          - Export todos (json/csv/txt)');
+  console.log('  import <filepath> [--replace]       - Import todos from file');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
@@ -421,6 +685,10 @@ function showUsage() {
   console.log('  node index.js clear                 - Remove ALL todos');
   console.log('  node index.js config show           - Show storage configuration');
   console.log('  node index.js autosave              - Show auto-save status and stats');
+  console.log('  node index.js migrate               - Show migration status');
+  console.log('  node index.js backup list           - List available backups');
+  console.log('  node index.js export csv            - Export todos to CSV');
+  console.log('  node index.js import todos.csv      - Import todos from CSV');
   console.log('  node index.js help delete           - Get detailed help for delete command');
   console.log('');
   console.log('STORAGE CONFIGURATION:');
@@ -518,10 +786,102 @@ function showCommandHelp(command) {
       console.log('  • Performance statistics and timing');
       console.log('  • Configuration environment variables');
       break;
+    case 'migrate':
+    case 'migration':
+      console.log('🔄 MIGRATION COMMAND HELP');
+      console.log('');
+      console.log('Manage data format migrations and upgrades.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js migrate               - Show migration status');
+      console.log('  node index.js migrate apply         - Apply available migrations');
+      console.log('');
+      console.log('📊 FEATURES:');
+      console.log('  • Automatic data format detection');
+      console.log('  • Safe migration with backups');
+      console.log('  • Version compatibility checking');
+      console.log('  • Migration history tracking');
+      console.log('');
+      console.log('⚠️  SAFETY:');
+      console.log('  • Automatic backups are created before migration');
+      console.log('  • Use "backup create" to manually backup first');
+      console.log('  • Migrations cannot be undone automatically');
+      break;
+    case 'backup':
+      console.log('💾 BACKUP COMMAND HELP');
+      console.log('');
+      console.log('Create, list, and restore data backups.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js backup create [reason]    - Create manual backup');
+      console.log('  node index.js backup list               - List available backups');
+      console.log('  node index.js backup restore <filename> - Restore from backup');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js backup create             - Create backup');
+      console.log('  node index.js backup create "pre-import" - Create backup with reason');
+      console.log('  node index.js backup list               - Show all backups');
+      console.log('  node index.js backup restore manual-backup-2024-01-01.json');
+      console.log('');
+      console.log('📦 BACKUP TYPES:');
+      console.log('  • Automatic: Created during saves (todos.json.backup)');
+      console.log('  • Manual: Created on demand with metadata');
+      console.log('  • Migration: Created before data migrations');
+      break;
+    case 'export':
+      console.log('📤 EXPORT COMMAND HELP');
+      console.log('');
+      console.log('Export todos to various formats for sharing or archiving.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js export <format> [filename]');
+      console.log('');
+      console.log('📄 SUPPORTED FORMATS:');
+      console.log('  json                             - JSON format (default)');
+      console.log('  csv                              - Comma-separated values');
+      console.log('  txt                              - Plain text format');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js export json       - Export to timestamped JSON file');
+      console.log('  node index.js export csv        - Export to CSV format');
+      console.log('  node index.js export txt        - Export to plain text');
+      console.log('');
+      console.log('💡 FEATURES:');
+      console.log('  • Includes all todo metadata (dates, priorities, tags)');
+      console.log('  • Automatic timestamped filenames');
+      console.log('  • Export metadata for tracking');
+      break;
+    case 'import':
+      console.log('📥 IMPORT COMMAND HELP');
+      console.log('');
+      console.log('Import todos from external files.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js import <filepath> [--replace]');
+      console.log('');
+      console.log('📄 SUPPORTED FORMATS:');
+      console.log('  .json                            - JSON format');
+      console.log('  .csv                             - CSV format');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js import todos.json     - Import and add to existing');
+      console.log('  node index.js import todos.csv      - Import CSV file');
+      console.log('  node index.js import data.json --replace - Replace all existing todos');
+      console.log('');
+      console.log('📊 CSV FORMAT:');
+      console.log('  Expected columns: description, completed, priority, tags, due date');
+      console.log('  Header row required');
+      console.log('  Automatic ID assignment');
+      console.log('');
+      console.log('💡 SAFETY:');
+      console.log('  • Automatic backup created before import');
+      console.log('  • Invalid entries are skipped with reporting');
+      console.log('  • Use --replace to clear existing data first');
+      break;
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete, clean, clear, config, autosave');
+      console.log('Available commands: add, list, complete, delete, clean, clear, config, autosave, migrate, backup, export, import');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
@@ -584,6 +944,25 @@ function parseArguments() {
     case 'auto-save':
     case 'status':
       return { command: 'autosave', ...parsed };
+    case 'migrate':
+    case 'migration':
+      return { command: 'migrate', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
+    case 'backup':
+      return { command: 'backup', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
+    case 'export':
+      return { command: 'export', format: filteredArgs[1], filename: filteredArgs[2], ...parsed };
+    case 'import':
+      const importArgs = filteredArgs.slice(1);
+      const replaceIndex = importArgs.indexOf('--replace');
+      const filePath = importArgs[0];
+      const replaceExisting = replaceIndex !== -1;
+
+      return {
+        command: 'import',
+        filePath,
+        replaceExisting,
+        ...parsed
+      };
     case 'help':
     case '--help':
     case '-h':
@@ -693,6 +1072,47 @@ async function main() {
         break;
       case 'autosave':
         await showStorageStatus();
+        break;
+      case 'migrate':
+        if (parsed.subcommand === 'apply' || (parsed.subcommand && parsed.subcommand !== 'status')) {
+          success = await performMigration();
+        } else {
+          await showMigrationStatus();
+        }
+        break;
+      case 'backup':
+        if (parsed.subcommand === 'create') {
+          const reason = parsed.args && parsed.args.length > 0 ? parsed.args.join(' ') : 'manual';
+          success = await createBackup(reason);
+        } else if (parsed.subcommand === 'list') {
+          success = await listBackups();
+        } else if (parsed.subcommand === 'restore' && parsed.args && parsed.args.length > 0) {
+          success = await restoreFromBackup(parsed.args[0]);
+        } else {
+          console.error('❌ Error: Invalid backup subcommand');
+          console.error('Usage: node index.js backup <create|list|restore> [args]');
+          console.error('Examples:');
+          console.error('  node index.js backup create');
+          console.error('  node index.js backup list');
+          console.error('  node index.js backup restore backup-filename.json');
+          success = false;
+        }
+        break;
+      case 'export':
+        const exportFormat = parsed.format || 'json';
+        success = await exportTodos(exportFormat, parsed.filename);
+        break;
+      case 'import':
+        if (!parsed.filePath) {
+          console.error('❌ Error: Import file path is required');
+          console.error('Usage: node index.js import <filepath> [--replace]');
+          success = false;
+        } else {
+          const importOptions = {
+            replaceExisting: parsed.replaceExisting
+          };
+          success = await importTodos(parsed.filePath, importOptions);
+        }
         break;
       case 'help':
         if (parsed.subcommand) {

@@ -1,6 +1,8 @@
 const path = require('path');
 const { StorageConfig } = require('./storage-config');
 const { StorageFactory } = require('./storage-registry');
+const { MigrationManager } = require('./migration-manager');
+const { RecoveryManager } = require('./recovery-manager');
 
 // Optional import of Todo model for enhanced validation
 let Todo = null;
@@ -45,6 +47,11 @@ class TodoCoreEnhanced {
 
     // Initialize storage
     this.storage = StorageFactory.create(this.storageType, this.config);
+
+    // Initialize migration and recovery managers
+    this.migrationManager = new MigrationManager(this.config);
+    this.recoveryManager = new RecoveryManager(this.config, this.storage);
+
     this.todos = [];
     this.nextId = 1;
     this.isInitialized = false;
@@ -64,10 +71,30 @@ class TodoCoreEnhanced {
         throw new Error(initResult.error);
       }
 
-      // Load existing todos
+      // Load existing todos with migration support
       const loadResult = await this.storage.loadData();
       if (loadResult.success) {
-        this.todos = loadResult.data;
+        // Check if data needs migration
+        const migrationResult = await this.migrationManager.migrateData(loadResult.data);
+
+        if (migrationResult.success && migrationResult.migrations.length > 0) {
+          this.log('info', `Applied ${migrationResult.migrations.length} migration(s): ${migrationResult.message}`);
+
+          // Create migration backup
+          await this.migrationManager.createMigrationBackup(loadResult.data, migrationResult);
+
+          // Save migrated data (extract todos array for storage)
+          const todosToSave = this.extractTodoArray(migrationResult.data);
+          const saveResult = await this.storage.saveData(todosToSave);
+          if (!saveResult.success) {
+            this.log('warn', `Failed to save migrated data: ${saveResult.error}`);
+          }
+
+          this.todos = this.extractTodoArray(migrationResult.data);
+        } else {
+          this.todos = this.extractTodoArray(loadResult.data);
+        }
+
         this.nextId = this.getNextId();
       } else {
         this.log('warn', `Failed to load data: ${loadResult.error}`);
@@ -140,6 +167,21 @@ class TodoCoreEnhanced {
   async performHealthCheck() {
     await this.ensureInitialized();
     return await this.storage.healthCheck();
+  }
+
+  /**
+   * Extract todo array from various data formats
+   */
+  extractTodoArray(data) {
+    if (Array.isArray(data)) {
+      return data;
+    }
+
+    if (data && typeof data === 'object' && Array.isArray(data.todos)) {
+      return data.todos;
+    }
+
+    return [];
   }
 
   /**
@@ -502,6 +544,160 @@ class TodoCoreEnhanced {
   async cleanup() {
     await this.ensureInitialized();
     return await this.storage.cleanup();
+  }
+
+  /**
+   * Migration and Recovery Methods
+   */
+
+  /**
+   * Get migration status for current data
+   */
+  async getMigrationStatus() {
+    await this.ensureInitialized();
+    return this.migrationManager.getMigrationStatus(this.todos);
+  }
+
+  /**
+   * Manually trigger data migration
+   */
+  async migrateData(targetVersion = null) {
+    await this.ensureInitialized();
+
+    const currentData = {
+      version: this.migrationManager.currentVersion,
+      todos: this.todos
+    };
+
+    const migrationResult = await this.migrationManager.migrateData(currentData, targetVersion);
+
+    if (migrationResult.success && migrationResult.migrations.length > 0) {
+      // Create backup before migration
+      await this.migrationManager.createMigrationBackup(currentData, migrationResult);
+
+      // Apply migration to in-memory data
+      this.todos = this.extractTodoArray(migrationResult.data);
+      this.nextId = this.getNextId();
+
+      // Save migrated data (extract todos array for storage)
+      const todosToSave = this.extractTodoArray(migrationResult.data);
+      const saveResult = await this.storage.saveData(todosToSave);
+      if (!saveResult.success) {
+        this.log('error', `Failed to save migrated data: ${saveResult.error}`);
+        migrationResult.saveError = saveResult.error;
+      }
+    }
+
+    return migrationResult;
+  }
+
+  /**
+   * Create a manual backup
+   */
+  async createBackup(reason = 'manual') {
+    await this.ensureInitialized();
+    return await this.recoveryManager.createManualBackup(this.todos, reason);
+  }
+
+  /**
+   * List available backups
+   */
+  getAvailableBackups() {
+    return this.recoveryManager.getAvailableBackups();
+  }
+
+  /**
+   * Restore from a specific backup
+   */
+  async restoreFromSpecificBackup(backupPath, options = {}) {
+    await this.ensureInitialized();
+
+    const restoreResult = await this.recoveryManager.restoreFromBackup(backupPath, options);
+
+    if (restoreResult.success) {
+      // Update in-memory data
+      this.todos = restoreResult.todos;
+      this.nextId = this.getNextId();
+
+      // Save restored data to storage
+      const saveResult = await this.storage.saveData(this.todos);
+      if (!saveResult.success) {
+        this.log('error', `Failed to save restored data: ${saveResult.error}`);
+        restoreResult.saveError = saveResult.error;
+      }
+    }
+
+    return restoreResult;
+  }
+
+  /**
+   * Export todos to various formats
+   */
+  async exportTodos(format = 'json', options = {}) {
+    await this.ensureInitialized();
+    return await this.recoveryManager.exportTodos(this.todos, format, options);
+  }
+
+  /**
+   * Import todos from external files
+   */
+  async importTodos(filePath, options = {}) {
+    await this.ensureInitialized();
+
+    const importResult = await this.recoveryManager.importTodos(filePath, options);
+
+    if (importResult.success) {
+      // Create backup before import if requested
+      if (options.createBackupBeforeImport !== false && this.todos.length > 0) {
+        await this.createBackup('pre-import');
+      }
+
+      // Add imported todos to current data
+      if (options.replaceExisting) {
+        this.todos = importResult.todos;
+      } else {
+        this.todos.push(...importResult.todos);
+      }
+
+      this.nextId = this.getNextId();
+
+      // Save updated data
+      const saveResult = await this.storage.saveData(this.todos);
+      if (!saveResult.success) {
+        this.log('error', `Failed to save imported data: ${saveResult.error}`);
+        importResult.saveError = saveResult.error;
+      }
+    }
+
+    return importResult;
+  }
+
+  /**
+   * Cleanup old backups
+   */
+  async cleanupBackups(options = {}) {
+    return await this.recoveryManager.cleanupBackups(options);
+  }
+
+  /**
+   * Get recovery statistics
+   */
+  getRecoveryStats() {
+    return this.recoveryManager.getRecoveryStats();
+  }
+
+  /**
+   * Get available migration backups
+   */
+  getAvailableMigrationBackups() {
+    return this.migrationManager.getAvailableMigrationBackups();
+  }
+
+  /**
+   * Cleanup migration backups
+   */
+  async cleanupMigrationBackups(keepCount = 5) {
+    return await this.migrationManager.cleanupMigrationBackups(keepCount);
   }
 
   async close() {
