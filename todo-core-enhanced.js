@@ -3,6 +3,7 @@ const { StorageConfig } = require('./storage-config');
 const { StorageFactory } = require('./storage-registry');
 const { MigrationManager } = require('./migration-manager');
 const { RecoveryManager } = require('./recovery-manager');
+const { UndoManager } = require('./undo-manager');
 
 // Optional import of Todo model for enhanced validation
 let Todo = null;
@@ -51,6 +52,13 @@ class TodoCoreEnhanced {
     // Initialize migration and recovery managers
     this.migrationManager = new MigrationManager(this.config);
     this.recoveryManager = new RecoveryManager(this.config, this.storage);
+
+    // Initialize undo manager
+    this.undoManager = new UndoManager({
+      maxHistorySize: 50,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      enableLogging: this.config.options.enableLogging || false
+    });
 
     this.todos = [];
     this.nextId = 1;
@@ -200,7 +208,7 @@ class TodoCoreEnhanced {
     const todoData = {
       id: this.nextId++,
       description: description.trim(),
-      completed: false,
+      completed: options.completed || false,
       priority: options.priority || 'medium',
       tags: options.tags || [],
       createdAt: new Date().toISOString()
@@ -209,6 +217,11 @@ class TodoCoreEnhanced {
     // Add due date if provided
     if (options.dueDate !== undefined) {
       todoData.dueDate = options.dueDate;
+    }
+
+    // Add completed timestamp if todo is created as completed
+    if (todoData.completed) {
+      todoData.completedAt = new Date().toISOString();
     }
 
     if (Todo) {
@@ -409,15 +422,32 @@ class TodoCoreEnhanced {
       }
     }
 
+    // Store metadata before deletion
+    const totalBefore = this.todos.length;
+
     this.todos.splice(todoIndex, 1);
 
     const saveResult = await this.storage.saveData(this.todos);
     if (saveResult.success) {
+      // Record deletion for undo capability
+      const deletionId = this.undoManager.recordDeletion({
+        type: 'single',
+        deletedTodos: [todo],
+        metadata: {
+          deletionMethod: useIndex ? 'index' : 'id',
+          originalPositions: { [todo.id]: todoIndex + 1 }, // Store 1-based position
+          totalBefore,
+          totalAfter: this.todos.length
+        },
+        timestamp: new Date().toISOString()
+      });
+
       return {
         success: true,
         todo,
         method: useIndex ? 'index' : 'id',
         deletedFrom: useIndex ? `position ${identifier}` : `ID ${identifier}`,
+        deletionId, // Include deletion ID for potential undo
         storage: {
           saved: true,
           count: saveResult.metadata.count,
@@ -517,6 +547,14 @@ class TodoCoreEnhanced {
     const deletedTodos = [];
     const deletedIds = todosToDelete.map(t => t.id);
 
+    // Store original positions for undo capability
+    const originalPositions = {};
+    originalTodos.forEach((todo, index) => {
+      if (deletedIds.includes(todo.id)) {
+        originalPositions[todo.id] = index + 1; // Store 1-based position
+      }
+    });
+
     // Remove todos from the list
     this.todos = this.todos.filter(todo => {
       if (deletedIds.includes(todo.id)) {
@@ -531,12 +569,27 @@ class TodoCoreEnhanced {
     if (saveResult.success) {
       this.log('info', `Bulk delete '${operation}': deleted ${deletedTodos.length} todos`);
 
+      // Record deletion for undo capability
+      const deletionId = this.undoManager.recordDeletion({
+        type: 'bulk',
+        deletedTodos,
+        metadata: {
+          operation,
+          deletionMethod: 'bulk',
+          originalPositions,
+          totalBefore: originalTodos.length,
+          totalAfter: this.todos.length
+        },
+        timestamp: new Date().toISOString()
+      });
+
       return {
         success: true,
         operation,
         deleted: deletedTodos,
         count: deletedTodos.length,
         remaining: this.todos.length,
+        deletionId, // Include deletion ID for potential undo
         storage: {
           saved: true,
           count: saveResult.metadata.count,
@@ -726,6 +779,14 @@ class TodoCoreEnhanced {
     const deletedTodos = [];
     const deletedIds = todosToDelete.map(t => t.id);
 
+    // Store original positions for undo capability
+    const originalPositions = {};
+    originalTodos.forEach((todo, index) => {
+      if (deletedIds.includes(todo.id)) {
+        originalPositions[todo.id] = index + 1; // Store 1-based position
+      }
+    });
+
     // Remove todos from the list
     this.todos = this.todos.filter(todo => {
       if (deletedIds.includes(todo.id)) {
@@ -748,6 +809,25 @@ class TodoCoreEnhanced {
     if (saveResult.success) {
       this.log('info', `Batch delete: deleted ${deletedTodos.length} todos by ${useIndex ? 'indices' : 'IDs'}`);
 
+      // Record deletion for undo capability
+      const deletionId = this.undoManager.recordDeletion({
+        type: 'batch',
+        deletedTodos: deletedTodos.map(todo => {
+          // Remove batch-specific metadata for clean undo
+          const { deletedBy, deletedFrom, ...cleanTodo } = todo;
+          return cleanTodo;
+        }),
+        metadata: {
+          deletionMethod: useIndex ? 'batch-index' : 'batch-id',
+          originalPositions,
+          totalBefore: originalTodos.length,
+          totalAfter: this.todos.length,
+          processed: identifiers.length,
+          found: todosToDelete.length
+        },
+        timestamp: new Date().toISOString()
+      });
+
       return {
         success: true,
         deleted: deletedTodos,
@@ -758,6 +838,7 @@ class TodoCoreEnhanced {
         notFound: notFound,
         remaining: this.todos.length,
         method: useIndex ? 'index' : 'id',
+        deletionId, // Include deletion ID for potential undo
         storage: {
           saved: true,
           count: saveResult.metadata.count,
@@ -1101,6 +1182,127 @@ class TodoCoreEnhanced {
       await this.storage.close();
     }
     this.isInitialized = false;
+  }
+
+  /**
+   * Undo Methods - Restore recently deleted todos
+   */
+
+  /**
+   * Get recent deletions that can be undone
+   * @param {number} limit - Maximum number of entries to return
+   * @returns {Array} - Array of recent deletion summaries
+   */
+  getRecentDeletions(limit = 10) {
+    return this.undoManager.getRecentDeletions(limit);
+  }
+
+  /**
+   * Undo a specific deletion by its ID
+   * @param {string} deletionId - ID of the deletion to undo
+   * @returns {Object} - Result with success status and restored todos
+   */
+  async undoDeletion(deletionId) {
+    await this.ensureInitialized();
+
+    const undoResult = this.undoManager.undoDeletion(deletionId, this.todos);
+
+    if (!undoResult.success) {
+      return undoResult;
+    }
+
+    try {
+      // Add restored todos back to the list
+      const restoredTodos = undoResult.restoredTodos;
+
+      // For optimal user experience, try to restore todos at their original positions
+      // However, this is complex due to potential conflicts, so we'll append them for now
+      restoredTodos.forEach(todo => {
+        // Ensure the todo has a unique ID that doesn't conflict
+        while (this.todos.find(t => t.id === todo.id)) {
+          todo.id = this.getNextId();
+        }
+        this.todos.push(todo);
+      });
+
+      // Update next ID to avoid conflicts
+      this.nextId = this.getNextId();
+
+      // Save the restored state
+      const saveResult = await this.storage.saveData(this.todos);
+
+      if (saveResult.success) {
+        this.log('info', `Undid ${undoResult.deletionType} deletion, restored ${restoredTodos.length} todos`);
+
+        return {
+          success: true,
+          restoredTodos,
+          deletionType: undoResult.deletionType,
+          restoredCount: restoredTodos.length,
+          metadata: undoResult.metadata,
+          storage: {
+            saved: true,
+            count: saveResult.metadata.count,
+            location: saveResult.metadata.location
+          }
+        };
+      } else {
+        // Revert the restoration since save failed
+        restoredTodos.forEach(todo => {
+          const index = this.todos.findIndex(t => t.id === todo.id);
+          if (index !== -1) {
+            this.todos.splice(index, 1);
+          }
+        });
+
+        return {
+          success: false,
+          error: `Undo succeeded but save failed: ${saveResult.error}`,
+          storage: { saved: false }
+        };
+      }
+    } catch (error) {
+      this.log('error', `Failed to complete undo operation: ${error.message}`);
+      return {
+        success: false,
+        error: `Failed to restore todos: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Undo the most recent deletion
+   * @returns {Object} - Result with success status and restored todos
+   */
+  async undoLastDeletion() {
+    await this.ensureInitialized();
+
+    const recentDeletion = this.undoManager.getMostRecentDeletion();
+
+    if (!recentDeletion) {
+      return {
+        success: false,
+        error: 'No recent deletions available to undo'
+      };
+    }
+
+    return await this.undoDeletion(recentDeletion.id);
+  }
+
+  /**
+   * Get undo manager statistics
+   * @returns {Object} - Statistics about undo history
+   */
+  getUndoStats() {
+    return this.undoManager.getStats();
+  }
+
+  /**
+   * Clear all undo history
+   * @returns {Object} - Result with cleared count
+   */
+  clearUndoHistory() {
+    return this.undoManager.clearHistory();
   }
 
   /**

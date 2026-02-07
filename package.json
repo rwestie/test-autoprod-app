@@ -7,13 +7,15 @@
     "todo": "./index.js"
   },
   "scripts": {
-    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-migration-manager.js && node test-recovery-manager.js && node test-delete-by-index.js && node test-batch-delete.js",
+    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-migration-manager.js && node test-recovery-manager.js && node test-delete-by-index.js && node test-batch-delete.js && node test-undo-manager.js && node test-undo-integration.js",
     "test:core": "node test.js",
     "test:autosave": "node test-autosave-integration.js",
     "test:storage": "node test-storage-config.js",
     "test:migration": "node test-migration-manager.js",
     "test:recovery": "node test-recovery-manager.js",
     "test:batch-delete": "node test-batch-delete.js",
+    "test:undo": "node test-undo-manager.js",
+    "test:undo-integration": "node test-undo-integration.js",
     "deploy:preview": "npm test && echo '🚀 Data migration and recovery feature ready for preview!'",
     "start": "node index.js"
   },

@@ -1093,6 +1093,263 @@ async function importTodos(filePath, options = {}) {
   return true;
 }
 
+// Undo the most recent deletion
+async function undoLastDeletion() {
+  console.log('↩️  UNDO LAST DELETION');
+  console.log('');
+
+  const undoResult = await todoCore.undoLastDeletion();
+
+  if (!undoResult.success) {
+    console.error(`❌ Error: ${undoResult.error}`);
+    if (undoResult.error.includes('No recent deletions')) {
+      console.log('💡 Delete some todos first, then you can undo those deletions.');
+      console.log('💡 Use "node index.js undo list" to see available deletions to undo.');
+    }
+    return false;
+  }
+
+  console.log(`✅ Successfully undid ${undoResult.deletionType} deletion!`);
+  console.log(`📝 Restored ${undoResult.restoredCount} todo(s):`);
+
+  undoResult.restoredTodos.forEach(todo => {
+    const status = todo.completed ? '✓' : ' ';
+    console.log(`  [${status}] #${todo.id}: ${todo.description}`);
+  });
+
+  // Display storage info if available
+  if (undoResult.storage && undoResult.storage.saved) {
+    console.log(`💾 Saved ${undoResult.storage.count} todos to ${undoResult.storage.location}`);
+  }
+
+  // Show current todo count
+  const todos = await todoCore.listTodos();
+  console.log(`📊 Current todos: ${todos.length} total`);
+
+  return true;
+}
+
+// Undo a specific deletion by ID
+async function undoSpecificDeletion(deletionId) {
+  console.log(`↩️  UNDO DELETION: ${deletionId}`);
+  console.log('');
+
+  const undoResult = await todoCore.undoDeletion(deletionId);
+
+  if (!undoResult.success) {
+    console.error(`❌ Error: ${undoResult.error}`);
+    if (undoResult.error.includes('not found')) {
+      console.log('💡 Use "node index.js undo list" to see available deletions to undo.');
+    }
+    return false;
+  }
+
+  console.log(`✅ Successfully undid ${undoResult.deletionType} deletion!`);
+  console.log(`📝 Restored ${undoResult.restoredCount} todo(s):`);
+
+  undoResult.restoredTodos.forEach(todo => {
+    const status = todo.completed ? '✓' : ' ';
+    console.log(`  [${status}] #${todo.id}: ${todo.description}`);
+  });
+
+  // Show deletion details
+  if (undoResult.metadata && undoResult.metadata.originalDeletion) {
+    const original = undoResult.metadata.originalDeletion;
+    console.log('');
+    console.log('🔍 Original deletion details:');
+    console.log(`  Deletion ID: ${original.id}`);
+    console.log(`  Type: ${original.type}`);
+    console.log(`  Deleted at: ${new Date(original.timestamp).toLocaleString()}`);
+    console.log(`  Undone at: ${new Date(undoResult.metadata.undoneAt).toLocaleString()}`);
+  }
+
+  // Display storage info if available
+  if (undoResult.storage && undoResult.storage.saved) {
+    console.log(`💾 Saved ${undoResult.storage.count} todos to ${undoResult.storage.location}`);
+  }
+
+  return true;
+}
+
+// List recent deletions that can be undone
+async function listRecentDeletions(limit = 10) {
+  console.log('📜 RECENT DELETIONS');
+  console.log('');
+
+  const recentDeletions = todoCore.getRecentDeletions(limit);
+
+  if (recentDeletions.length === 0) {
+    console.log('No recent deletions available for undo.');
+    console.log('');
+    console.log('💡 TIP: When you delete todos, they\'ll appear here and can be undone.');
+    console.log('💡 Deletions are kept for 24 hours and up to 50 entries.');
+    return true;
+  }
+
+  console.log(`Found ${recentDeletions.length} recent deletion(s) that can be undone:`);
+  console.log('');
+
+  recentDeletions.forEach((deletion, index) => {
+    const typeIcon = {
+      'single': '🗑️',
+      'batch': '📦',
+      'bulk': '🧹'
+    }[deletion.type] || '❌';
+
+    console.log(`${index + 1}. ${typeIcon} ${deletion.summary}`);
+    console.log(`   ID: ${deletion.id}`);
+    console.log(`   Count: ${deletion.deletedCount} todo(s)`);
+    console.log(`   Time: ${new Date(deletion.timestamp).toLocaleString()}`);
+    console.log('');
+  });
+
+  console.log('💡 To undo a specific deletion:');
+  console.log('   node index.js undo <deletion-id>');
+  console.log('');
+  console.log('💡 To undo the most recent deletion:');
+  console.log('   node index.js undo');
+
+  return true;
+}
+
+// Show undo statistics and status
+async function showUndoStats() {
+  console.log('📊 UNDO STATISTICS');
+  console.log('');
+
+  const stats = todoCore.getUndoStats();
+
+  console.log('📈 HISTORY OVERVIEW:');
+  console.log(`  Total deletion entries: ${stats.totalEntries}`);
+  console.log(`  Available for undo: ${stats.availableUndos}`);
+  console.log(`  Already used: ${stats.usedUndos}`);
+  console.log(`  Max history size: ${stats.maxHistorySize}`);
+  console.log('');
+
+  if (Object.keys(stats.typeStats).length > 0) {
+    console.log('📋 DELETION TYPES:');
+    Object.entries(stats.typeStats).forEach(([type, count]) => {
+      const typeIcon = {
+        'single': '🗑️',
+        'batch': '📦',
+        'bulk': '🧹'
+      }[type] || '❌';
+      console.log(`  ${typeIcon} ${type}: ${count} deletion(s)`);
+    });
+    console.log('');
+  }
+
+  console.log('ℹ️  INFORMATION:');
+  console.log('  • Deletions are stored for 24 hours');
+  console.log('  • Maximum 50 deletion entries kept');
+  console.log('  • Each deletion can only be undone once');
+  console.log('  • Undoing restores todos with new IDs if conflicts exist');
+
+  return true;
+}
+
+// Clear all undo history
+async function clearUndoHistory() {
+  console.log('🗑️  CLEAR UNDO HISTORY');
+  console.log('');
+
+  console.log('⚠️  WARNING: This will permanently remove all undo history!');
+  console.log('After clearing, you will not be able to undo any previous deletions.');
+  console.log('');
+
+  const confirmed = await ConfirmationUtil.confirmDelete('clear-undo', [], {
+    force: false,
+    showItems: false
+  });
+
+  if (!confirmed) {
+    ConfirmationUtil.showCancellationMessage('Clear undo history operation');
+    console.log('💡 Use --force flag to skip confirmation: node index.js undo clear --force');
+    return false;
+  }
+
+  const clearResult = todoCore.clearUndoHistory();
+
+  if (clearResult.success) {
+    console.log(`✅ Successfully cleared ${clearResult.clearedCount} undo entries.`);
+    console.log('📝 Undo history is now empty.');
+  } else {
+    console.error('❌ Failed to clear undo history.');
+    return false;
+  }
+
+  return true;
+}
+
+// Show detailed help for undo commands
+function showUndoHelp() {
+  console.log('↩️  UNDO COMMAND HELP');
+  console.log('');
+  console.log('Restore recently deleted todos back to your list.');
+  console.log('');
+  console.log('📋 SYNTAX:');
+  console.log('  node index.js undo                     - Undo the most recent deletion');
+  console.log('  node index.js undo <deletion-id>       - Undo a specific deletion');
+  console.log('  node index.js undo list [count]        - List recent deletions');
+  console.log('  node index.js undo stats               - Show undo statistics');
+  console.log('  node index.js undo clear [--force]     - Clear undo history');
+  console.log('');
+  console.log('📝 SUBCOMMANDS:');
+  console.log('  (no args)                               - Undo most recent deletion');
+  console.log('  <deletion-id>                           - Undo specific deletion by its ID');
+  console.log('  list [count]                            - Show recent deletions (default: 10)');
+  console.log('  stats                                   - Show undo statistics and limits');
+  console.log('  clear                                   - Clear all undo history (with confirmation)');
+  console.log('');
+  console.log('✨ EXAMPLES:');
+  console.log('  🔄 Basic undo operations:');
+  console.log('  node index.js undo                     - Undo the last deletion');
+  console.log('  node index.js undo del_1234567890_abc  - Undo specific deletion');
+  console.log('');
+  console.log('  📜 List and browse deletions:');
+  console.log('  node index.js undo list                - Show last 10 deletions');
+  console.log('  node index.js undo list 20             - Show last 20 deletions');
+  console.log('  node index.js undo stats               - Show undo statistics');
+  console.log('');
+  console.log('  🗑️  Manage undo history:');
+  console.log('  node index.js undo clear               - Clear history (with confirmation)');
+  console.log('  node index.js undo clear --force       - Clear history (skip confirmation)');
+  console.log('');
+  console.log('🔄 HOW UNDO WORKS:');
+  console.log('  • When you delete todos, they\'re saved in an undo history');
+  console.log('  • You can restore deleted todos using the undo command');
+  console.log('  • Each deletion gets a unique ID for specific undo operations');
+  console.log('  • Restored todos get new IDs to avoid conflicts');
+  console.log('  • Each deletion can only be undone once');
+  console.log('');
+  console.log('📊 SUPPORTED DELETION TYPES:');
+  console.log('  🗑️  Single: Individual todo deletions (delete, remove, rm)');
+  console.log('  📦 Batch: Multiple todo deletions (batch-delete, batch-remove)');
+  console.log('  🧹 Bulk: Mass operations (clean completed, clear all)');
+  console.log('');
+  console.log('⏰ TIME LIMITS:');
+  console.log('  • Deletions are kept for 24 hours');
+  console.log('  • Maximum 50 deletion entries stored');
+  console.log('  • Older entries are automatically cleaned up');
+  console.log('');
+  console.log('💡 TIPS:');
+  console.log('  • Use "list" to see what can be undone');
+  console.log('  • Deletion IDs are shown when deleting todos');
+  console.log('  • Undo immediately after accidental deletions');
+  console.log('  • Use "stats" to monitor undo history usage');
+  console.log('  • Clear history periodically for privacy');
+  console.log('');
+  console.log('❌ LIMITATIONS:');
+  console.log('  • Cannot undo the same deletion twice');
+  console.log('  • Restored todos may have different positions');
+  console.log('  • Undo history is not persisted between application restarts');
+  console.log('  • Cannot undo operations from previous application sessions');
+  console.log('');
+  console.log('📚 MORE HELP:');
+  console.log('  node index.js help                     - Show all available commands');
+  console.log('  node index.js help delete              - Help for deletion commands');
+}
+
 // Show usage information
 function showUsage() {
   console.log('📝 Todo List Application');
@@ -1117,6 +1374,10 @@ function showUsage() {
   console.log('  clean --force                       - Delete completed todos without confirmation');
   console.log('  clear                               - Delete ALL todos (with confirmation)');
   console.log('  clear --force                       - Delete all todos without confirmation');
+  console.log('  undo [deletion-id]                  - Undo recent deletions');
+  console.log('  undo list [count]                   - List recent deletions that can be undone');
+  console.log('  undo stats                          - Show undo statistics and limits');
+  console.log('  undo clear [--force]                - Clear undo history');
   console.log('  config <subcommand>                 - Manage storage configuration');
   console.log('  autosave                            - Show auto-save status and performance');
   console.log('  migrate                             - Show migration status or apply migrations');
@@ -1133,6 +1394,9 @@ function showUsage() {
   console.log('  node index.js batch-delete 1 3 5    - Delete todos #1, #3, and #5');
   console.log('  node index.js clean                 - Remove all completed todos');
   console.log('  node index.js clear                 - Remove ALL todos');
+  console.log('  node index.js undo                  - Undo the last deletion');
+  console.log('  node index.js undo list             - Show recent deletions');
+  console.log('  node index.js undo del_123_abc      - Undo specific deletion');
   console.log('  node index.js config show           - Show storage configuration');
   console.log('  node index.js autosave              - Show auto-save status and stats');
   console.log('  node index.js migrate               - Show migration status');
@@ -1179,6 +1443,9 @@ function showCommandHelp(command) {
       break;
     case 'config':
       showConfigHelp();
+      break;
+    case 'undo':
+      showUndoHelp();
       break;
     case 'add':
       console.log('➕ ADD COMMAND HELP');
@@ -1337,7 +1604,7 @@ function showCommandHelp(command) {
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete, clean, clear, config, autosave, migrate, backup, export, import');
+      console.log('Available commands: add, list, complete, delete, clean, clear, undo, config, autosave, migrate, backup, export, import');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
@@ -1435,6 +1702,28 @@ function parseArguments() {
         replaceExisting,
         ...parsed
       };
+    case 'undo':
+      // Parse undo subcommands: undo, undo <id>, undo list [count], undo stats, undo clear
+      const undoSubcommand = filteredArgs[1];
+      const undoArgs = filteredArgs.slice(2);
+
+      if (!undoSubcommand) {
+        // Just "undo" - undo last deletion
+        return { command: 'undo', subcommand: 'last', ...parsed };
+      } else if (undoSubcommand === 'list') {
+        // "undo list [count]"
+        const count = undoArgs[0] ? parseInt(undoArgs[0]) : 10;
+        return { command: 'undo', subcommand: 'list', count, ...parsed };
+      } else if (undoSubcommand === 'stats') {
+        // "undo stats"
+        return { command: 'undo', subcommand: 'stats', ...parsed };
+      } else if (undoSubcommand === 'clear') {
+        // "undo clear [--force]"
+        return { command: 'undo', subcommand: 'clear', force: parsed.force, ...parsed };
+      } else {
+        // "undo <deletion-id>" - undo specific deletion
+        return { command: 'undo', subcommand: 'specific', deletionId: undoSubcommand, ...parsed };
+      }
     case 'help':
     case '--help':
     case '-h':
@@ -1622,6 +1911,38 @@ async function main() {
             replaceExisting: parsed.replaceExisting
           };
           success = await importTodos(parsed.filePath, importOptions);
+        }
+        break;
+      case 'undo':
+        switch (parsed.subcommand) {
+          case 'last':
+            success = await undoLastDeletion();
+            break;
+          case 'specific':
+            if (!parsed.deletionId) {
+              console.error('❌ Error: Deletion ID is required');
+              console.error('Usage: node index.js undo <deletion-id>');
+              console.error('Use "node index.js undo list" to see available deletions');
+              success = false;
+            } else {
+              success = await undoSpecificDeletion(parsed.deletionId);
+            }
+            break;
+          case 'list':
+            success = await listRecentDeletions(parsed.count || 10);
+            break;
+          case 'stats':
+            success = await showUndoStats();
+            break;
+          case 'clear':
+            success = await clearUndoHistory();
+            break;
+          default:
+            console.error(`❌ Error: Unknown undo subcommand "${parsed.subcommand}"`);
+            console.error('Available subcommands: list, stats, clear');
+            console.error('Use "node index.js help undo" for detailed help');
+            success = false;
+            break;
         }
         break;
       case 'help':
