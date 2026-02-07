@@ -298,6 +298,147 @@ async function clearAllTodos(options = {}) {
   return true;
 }
 
+// Batch delete multiple todos by IDs or indices
+async function batchDeleteTodos(identifiers, options = {}) {
+  const { useIndex = false, force = false } = options;
+  const method = useIndex ? 'indices' : 'IDs';
+
+  console.log(`🗑️  BATCH DELETE BY ${method.toUpperCase()}`);
+  console.log('');
+
+  // Preview what will be deleted
+  const previewResult = await todoCore.previewBatchDelete(identifiers, { useIndex });
+
+  if (!previewResult.success) {
+    console.error(`❌ Error: ${previewResult.error}`);
+
+    if (previewResult.errors && previewResult.errors.length > 0) {
+      console.error('🔍 Issues found:');
+      previewResult.errors.forEach(error => {
+        console.error(`  • ${error}`);
+      });
+    }
+
+    if (previewResult.notFound && previewResult.notFound.length > 0) {
+      console.error('❌ Not found:');
+      previewResult.notFound.forEach(item => {
+        console.error(`  • ${item}`);
+      });
+    }
+
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  if (previewResult.count === 0) {
+    console.log(`✨ No todos found to delete with the provided ${method}.`);
+    console.log('💡 Use "node index.js list" to see your current todos.');
+    return true;
+  }
+
+  // Show summary
+  console.log(`📊 BATCH DELETE SUMMARY:`);
+  console.log(`  Requested: ${previewResult.processed} ${method}`);
+  console.log(`  Found: ${previewResult.found} todos`);
+  if (previewResult.errors && previewResult.errors.length > 0) {
+    console.log(`  Errors: ${previewResult.errors.length} issues`);
+  }
+  if (previewResult.notFound && previewResult.notFound.length > 0) {
+    console.log(`  Not found: ${previewResult.notFound.length} ${method}`);
+  }
+  console.log('');
+
+  // Show what will be deleted
+  console.log(`📋 Found ${previewResult.count} todos to delete:`);
+  previewResult.toBeDeleted.forEach(todo => {
+    const status = todo.completed ? '✓' : ' ';
+    const position = todo.position ? ` (pos: ${todo.position})` : '';
+    const resolvedBy = todo.resolvedBy === 'index' ? ` [by index]` : ` [by ID]`;
+    console.log(`  [${status}] #${todo.id}: ${todo.description}${position}${resolvedBy}`);
+  });
+  console.log('');
+
+  // Show any issues found
+  if (previewResult.errors && previewResult.errors.length > 0) {
+    console.log('⚠️  Issues encountered:');
+    previewResult.errors.forEach(error => {
+      console.log(`  • ${error}`);
+    });
+    console.log('');
+  }
+
+  if (previewResult.notFound && previewResult.notFound.length > 0) {
+    console.log('❌ Could not find:');
+    previewResult.notFound.forEach(item => {
+      console.log(`  • ${item}`);
+    });
+    console.log('');
+  }
+
+  // Confirm deletion
+  const confirmed = await ConfirmationUtil.confirmDelete('batch', previewResult.toBeDeleted, {
+    force,
+    showItems: false  // Items already shown above
+  });
+
+  if (!confirmed) {
+    ConfirmationUtil.showCancellationMessage('Batch delete operation');
+    ConfirmationUtil.showForceHelp(`batch-delete ${identifiers.join(' ')}${useIndex ? ' --index' : ''}`);
+    return false;
+  }
+
+  // Perform the batch deletion
+  const result = await todoCore.batchDeleteTodos(identifiers, { useIndex });
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
+    return false;
+  }
+
+  console.log(`✅ Successfully deleted ${result.count} todos by ${result.method === 'index' ? 'indices' : 'IDs'}!`);
+  console.log('');
+
+  // Show deleted todos
+  if (result.deleted && result.deleted.length > 0) {
+    console.log('🗑️  Deleted todos:');
+    result.deleted.forEach(todo => {
+      const status = todo.completed ? '✓' : ' ';
+      console.log(`  [${status}] #${todo.id}: ${todo.description} (${todo.deletedFrom})`);
+    });
+    console.log('');
+  }
+
+  // Display storage info if available
+  if (result.storage && result.storage.saved) {
+    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+  }
+
+  // Show remaining todos summary
+  console.log(`📊 Remaining todos: ${result.remaining} total`);
+  if (result.remaining === 0) {
+    console.log('📝 All todos deleted! Add new ones with: node index.js add "Description"');
+  }
+
+  // Show summary statistics
+  if (result.processed > result.count) {
+    console.log('');
+    console.log('📈 BATCH DELETE STATISTICS:');
+    console.log(`  Processed: ${result.processed} ${method}`);
+    console.log(`  Successfully deleted: ${result.count} todos`);
+    if (result.errors && result.errors.length > 0) {
+      console.log(`  Errors: ${result.errors.length} issues`);
+    }
+    if (result.notFound && result.notFound.length > 0) {
+      console.log(`  Not found: ${result.notFound.length} ${method}`);
+    }
+  }
+
+  return true;
+}
+
 // Show detailed help for delete command
 function showDeleteHelp() {
   console.log('🗑️  DELETE COMMAND HELP');
@@ -414,6 +555,96 @@ function showCleanupHelp() {
   console.log('📚 MORE HELP:');
   console.log('  node index.js help                  - Show all available commands');
   console.log('  node index.js help delete           - Help for single todo deletion');
+  console.log('  node index.js help batch-delete     - Help for batch todo deletion');
+}
+
+// Show detailed help for batch delete command
+function showBatchDeleteHelp() {
+  console.log('🗑️  BATCH DELETE COMMAND HELP');
+  console.log('');
+  console.log('Delete multiple todo items permanently from your list by IDs or positions in one operation.');
+  console.log('');
+  console.log('📋 SYNTAX:');
+  console.log('  node index.js batch-delete <id1> <id2> [id3...]           - Delete multiple todos by IDs');
+  console.log('  node index.js batch-delete <pos1> <pos2> [pos3...] --index - Delete multiple todos by positions');
+  console.log('  node index.js batch-delete <ids...> --force               - Skip confirmation prompt');
+  console.log('  node index.js batch-remove <ids...>                       - Same as batch-delete');
+  console.log('  node index.js batch-rm <ids...>                           - Same as batch-delete');
+  console.log('');
+  console.log('📝 PARAMETERS:');
+  console.log('  <id1> <id2> ...                     - Multiple ID numbers separated by spaces');
+  console.log('  <pos1> <pos2> ...                   - Multiple positions in the list (1-based indexing)');
+  console.log('  --index                             - Use position-based deletion instead of IDs');
+  console.log('  --force                             - Skip confirmation prompt (immediate deletion)');
+  console.log('');
+  console.log('✨ EXAMPLES:');
+  console.log('  🔢 By IDs (default behavior):');
+  console.log('  node index.js batch-delete 5 7 12          - Delete todos with IDs 5, 7, and 12');
+  console.log('  node index.js batch-remove 2 8 15          - Delete todos with IDs 2, 8, and 15');
+  console.log('  node index.js batch-rm 3 9                 - Delete todos with IDs 3 and 9');
+  console.log('');
+  console.log('  📍 By Positions (with --index flag):');
+  console.log('  node index.js batch-delete 1 3 5 --index   - Delete 1st, 3rd, and 5th todos');
+  console.log('  node index.js batch-delete 2 4 --index     - Delete 2nd and 4th todos');
+  console.log('  node index.js batch-rm 1 2 3 --index       - Delete first three todos');
+  console.log('');
+  console.log('  ⚡ Skip Confirmation (with --force flag):');
+  console.log('  node index.js batch-delete 5 7 --force     - Delete without confirmation');
+  console.log('  node index.js batch-rm 1 2 --index --force - Delete first two todos without confirmation');
+  console.log('');
+  console.log('🔄 DIFFERENCE BETWEEN ID AND POSITION:');
+  console.log('  • ID: Unique identifier (e.g., #5, #7, #12) - never changes');
+  console.log('  • Position: Current order in list (1st, 2nd, 3rd) - changes as you add/remove');
+  console.log('  • Use IDs when you know the specific todo numbers shown in list');
+  console.log('  • Use positions when you want to delete "the first few todos" or "every other todo"');
+  console.log('');
+  console.log('⚙️  BATCH OPERATION FEATURES:');
+  console.log('  • Validates all identifiers before deleting any todos');
+  console.log('  • Shows preview of what will be deleted before confirmation');
+  console.log('  • Handles duplicates automatically (each todo deleted only once)');
+  console.log('  • Reports detailed statistics of success/failure for each identifier');
+  console.log('  • Continues processing even if some identifiers are invalid');
+  console.log('  • Atomic operation - either all valid deletes succeed or all fail');
+  console.log('');
+  console.log('🛡️  CONFIRMATION BEHAVIOR:');
+  console.log('  • By default, you will be asked to confirm before deleting any todos');
+  console.log('  • The app shows exactly what will be deleted and any issues found');
+  console.log('  • Reports both successful finds and any errors or missing items');
+  console.log('  • Type "y" or "yes" to proceed with deletion');
+  console.log('  • Type "n" or "no" to cancel the entire operation');
+  console.log('  • Use --force flag to skip confirmation and delete immediately');
+  console.log('  • This helps prevent accidental deletions of important todos');
+  console.log('');
+  console.log('📊 PROCESSING DETAILS:');
+  console.log('  • Duplicate identifiers are automatically removed');
+  console.log('  • Invalid formats (non-numbers) are reported as errors');
+  console.log('  • Non-existent IDs or out-of-range positions are reported as not found');
+  console.log('  • Only valid, found todos are included in the deletion operation');
+  console.log('  • Detailed success/failure statistics are shown after completion');
+  console.log('');
+  console.log('💡 TIPS:');
+  console.log('  • Use "node index.js list" to see all todos with their IDs and positions');
+  console.log('  • Position counting starts at 1 (not 0) for user-friendly interface');
+  console.log('  • Batch deleting is permanent - it cannot be undone');
+  console.log('  • You can mix IDs but not mix IDs with positions in one command');
+  console.log('  • Large batch operations show progress and detailed reporting');
+  console.log('  • Use single delete for individual todos, batch for multiple');
+  console.log('');
+  console.log('❌ COMMON ERRORS:');
+  console.log('  • "Invalid format" - Some identifiers are not numbers');
+  console.log('  • "Not found" - Some IDs don\'t exist or positions are out of range');
+  console.log('  • "No identifiers" - Must provide at least one ID or position');
+  console.log('  • "Mixed usage" - Cannot use both --index and regular IDs simultaneously');
+  console.log('');
+  console.log('🔗 RELATED COMMANDS:');
+  console.log('  delete <id>                         - Delete a single todo');
+  console.log('  clean                               - Delete all completed todos');
+  console.log('  clear                               - Delete ALL todos');
+  console.log('');
+  console.log('📚 MORE HELP:');
+  console.log('  node index.js help                  - Show all available commands');
+  console.log('  node index.js help delete           - Help for single todo deletion');
+  console.log('  node index.js help clean            - Help for cleaning completed todos');
 }
 
 // Show storage configuration
@@ -880,6 +1111,8 @@ function showUsage() {
   console.log('  delete <id>                         - Delete a todo by ID (with confirmation)');
   console.log('  delete <position> --index           - Delete a todo by position (with confirmation)');
   console.log('  delete <id> --force                 - Delete without confirmation');
+  console.log('  batch-delete <ids...>               - Delete multiple todos by IDs');
+  console.log('  batch-delete <positions...> --index - Delete multiple todos by positions');
   console.log('  clean                               - Delete all completed todos (with confirmation)');
   console.log('  clean --force                       - Delete completed todos without confirmation');
   console.log('  clear                               - Delete ALL todos (with confirmation)');
@@ -897,6 +1130,7 @@ function showUsage() {
   console.log('  node index.js list                  - Show all todos');
   console.log('  node index.js complete 1            - Mark todo #1 as done');
   console.log('  node index.js delete 2              - Delete todo #2');
+  console.log('  node index.js batch-delete 1 3 5    - Delete todos #1, #3, and #5');
   console.log('  node index.js clean                 - Remove all completed todos');
   console.log('  node index.js clear                 - Remove ALL todos');
   console.log('  node index.js config show           - Show storage configuration');
@@ -916,6 +1150,7 @@ function showUsage() {
   console.log('  ls, list                            - List todos');
   console.log('  done, complete                      - Mark complete');
   console.log('  rm, remove, delete                  - Delete todos');
+  console.log('  batch-rm, batch-remove, batch-delete - Delete multiple todos');
   console.log('  clean, cleanup                      - Delete completed todos');
   console.log('  clear, purge                        - Delete ALL todos');
   console.log('  -h, --help, help                    - Show help');
@@ -930,6 +1165,11 @@ function showCommandHelp(command) {
     case 'remove':
     case 'rm':
       showDeleteHelp();
+      break;
+    case 'batch-delete':
+    case 'batch-remove':
+    case 'batch-rm':
+      showBatchDeleteHelp();
       break;
     case 'clean':
     case 'cleanup':
@@ -1158,6 +1398,12 @@ function parseArguments() {
     case 'remove':
     case 'rm':
       return { command: 'delete', identifier: filteredArgs[1], useIndex: parsed.useIndex, ...parsed };
+    case 'batch-delete':
+    case 'batch-remove':
+    case 'batch-rm':
+      // Parse multiple identifiers for batch deletion
+      const identifiers = filteredArgs.slice(1);
+      return { command: 'batch-delete', identifiers, useIndex: parsed.useIndex, ...parsed };
     case 'clean':
     case 'cleanup':
       return { command: 'clean', force: parsed.force, ...parsed };
@@ -1241,6 +1487,38 @@ function validateCommand(parsed) {
       }
       break;
 
+    case 'batch-delete':
+      if (!parsed.identifiers || parsed.identifiers.length === 0) {
+        const usage = parsed.useIndex ? 'node index.js batch-delete <pos1> <pos2> ... --index' : 'node index.js batch-delete <id1> <id2> ...';
+        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions (1-based indexing)' : 'Use "node index.js list" to see available todo IDs';
+        console.error(`❌ Error: Batch delete command requires at least one ${parsed.useIndex ? 'position' : 'todo ID'}`);
+        console.error(`📋 Usage: ${usage}`);
+        console.error(`💡 Tip: ${tip}`);
+        console.error('');
+        console.error('✨ Examples:');
+        if (parsed.useIndex) {
+          console.error('  node index.js batch-delete 1 2 3 --index    - Delete first, second, and third todos');
+          console.error('  node index.js batch-rm 5 1 --index          - Delete fifth and first todos');
+        } else {
+          console.error('  node index.js batch-delete 5 7 12           - Delete todos with IDs 5, 7, and 12');
+          console.error('  node index.js batch-rm 3 8                  - Delete todos with IDs 3 and 8');
+        }
+        return false;
+      }
+      // Check if identifiers are valid numbers
+      for (const identifier of parsed.identifiers) {
+        if (isNaN(parseInt(identifier))) {
+          const type = parsed.useIndex ? 'position' : 'Todo ID';
+          const example = parsed.useIndex ? 'positions like 1, 2, 3' : 'numbers like 1, 2, 3';
+          const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions' : 'Use "node index.js list" to see available todo IDs';
+          console.error(`❌ Error: All ${type}s must be valid numbers`);
+          console.error(`📋 You provided: "${identifier}" - this should be a ${example}, etc.`);
+          console.error(`💡 Tip: ${tip}`);
+          return false;
+        }
+      }
+      break;
+
     case 'unknown':
       console.error(`Error: Unknown command "${parsed.original}"`);
       console.error('Run "node index.js help" to see available commands');
@@ -1276,6 +1554,9 @@ async function main() {
         break;
       case 'delete':
         success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex, force: parsed.force });
+        break;
+      case 'batch-delete':
+        success = await batchDeleteTodos(parsed.identifiers, { useIndex: parsed.useIndex, force: parsed.force });
         break;
       case 'clean':
         success = await cleanCompletedTodos({ force: parsed.force });

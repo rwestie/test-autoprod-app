@@ -586,6 +586,208 @@ class TodoCoreEnhanced {
   }
 
   /**
+   * Delete multiple specific todos by their IDs or indices
+   * @param {Array} identifiers - Array of todo IDs or indices
+   * @param {Object} options - Options for batch deletion
+   * @param {boolean} options.useIndex - If true, treat identifiers as indices (1-based positions)
+   * @param {boolean} options.dryRun - If true, return what would be deleted without deleting
+   * @param {boolean} options.force - If true, skip confirmation prompts
+   * @returns {Object} Result with deleted todos and details
+   */
+  async batchDeleteTodos(identifiers, options = {}) {
+    await this.ensureInitialized();
+
+    const { useIndex = false, dryRun = false, force = false } = options;
+
+    if (!Array.isArray(identifiers) || identifiers.length === 0) {
+      return {
+        success: false,
+        error: 'At least one todo ID or index must be provided'
+      };
+    }
+
+    // Validate and resolve todos to delete
+    const todosToDelete = [];
+    const notFound = [];
+    const errors = [];
+
+    for (const identifier of identifiers) {
+      try {
+        if (useIndex) {
+          // Index-based deletion (1-based indexing for user-friendly interface)
+          const index = parseInt(identifier);
+          if (isNaN(index) || index < 1) {
+            errors.push(`Invalid index: "${identifier}" (must be a positive number)`);
+            continue;
+          }
+
+          // Convert 1-based user index to 0-based array index
+          const arrayIndex = index - 1;
+          if (arrayIndex >= this.todos.length) {
+            notFound.push(`Index ${index} (out of range, list has ${this.todos.length} todos)`);
+            continue;
+          }
+
+          const todo = this.todos[arrayIndex];
+          if (!todosToDelete.find(t => t.id === todo.id)) {
+            todosToDelete.push({
+              ...todo,
+              identifier,
+              resolvedBy: 'index',
+              position: index
+            });
+          }
+        } else {
+          // ID-based deletion
+          const numId = parseInt(identifier);
+          if (isNaN(numId)) {
+            errors.push(`Invalid ID format: "${identifier}" (must be a number)`);
+            continue;
+          }
+
+          const todo = this.todos.find(t => t.id === numId);
+          if (!todo) {
+            notFound.push(`Todo with ID ${numId}`);
+            continue;
+          }
+
+          if (!todosToDelete.find(t => t.id === todo.id)) {
+            todosToDelete.push({
+              ...todo,
+              identifier,
+              resolvedBy: 'id'
+            });
+          }
+        }
+      } catch (error) {
+        errors.push(`Error processing "${identifier}": ${error.message}`);
+      }
+    }
+
+    // Check if any todos were found
+    if (todosToDelete.length === 0) {
+      const errorMessages = [];
+      if (errors.length > 0) {
+        errorMessages.push(`Errors: ${errors.join(', ')}`);
+      }
+      if (notFound.length > 0) {
+        errorMessages.push(`Not found: ${notFound.join(', ')}`);
+      }
+      return {
+        success: false,
+        error: errorMessages.join('; '),
+        processed: identifiers.length,
+        found: 0,
+        errors: errors,
+        notFound: notFound
+      };
+    }
+
+    // Validate todos can be deleted using Todo model if available
+    const undeletableTodos = [];
+    if (Todo) {
+      for (const todoData of todosToDelete) {
+        try {
+          const todoInstance = new Todo(todoData);
+          if (!todoInstance.canBeDeleted()) {
+            undeletableTodos.push(todoData.id);
+          }
+        } catch (error) {
+          this.log('warn', `Failed to validate delete for todo ${todoData.id}: ${error.message}`);
+        }
+      }
+    }
+
+    if (undeletableTodos.length > 0) {
+      return {
+        success: false,
+        error: `Some todos cannot be deleted due to business rules: IDs ${undeletableTodos.join(', ')}`,
+        undeletableTodos
+      };
+    }
+
+    // If dry run, return what would be deleted
+    if (dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        toBeDeleted: todosToDelete,
+        count: todosToDelete.length,
+        processed: identifiers.length,
+        found: todosToDelete.length,
+        errors: errors,
+        notFound: notFound,
+        message: `Would delete ${todosToDelete.length} todos`
+      };
+    }
+
+    // Perform batch delete
+    const originalTodos = [...this.todos];
+    const deletedTodos = [];
+    const deletedIds = todosToDelete.map(t => t.id);
+
+    // Remove todos from the list
+    this.todos = this.todos.filter(todo => {
+      if (deletedIds.includes(todo.id)) {
+        // Find the corresponding todoToDelete to preserve metadata
+        const todoToDelete = todosToDelete.find(t => t.id === todo.id);
+        deletedTodos.push({
+          ...todo,
+          deletedBy: todoToDelete.resolvedBy,
+          deletedFrom: todoToDelete.resolvedBy === 'index' ?
+            `position ${todoToDelete.position}` :
+            `ID ${todoToDelete.identifier}`
+        });
+        return false;
+      }
+      return true;
+    });
+
+    // Save changes
+    const saveResult = await this.storage.saveData(this.todos);
+    if (saveResult.success) {
+      this.log('info', `Batch delete: deleted ${deletedTodos.length} todos by ${useIndex ? 'indices' : 'IDs'}`);
+
+      return {
+        success: true,
+        deleted: deletedTodos,
+        count: deletedTodos.length,
+        processed: identifiers.length,
+        found: todosToDelete.length,
+        errors: errors,
+        notFound: notFound,
+        remaining: this.todos.length,
+        method: useIndex ? 'index' : 'id',
+        storage: {
+          saved: true,
+          count: saveResult.metadata.count,
+          location: saveResult.metadata.location
+        },
+        message: `Successfully deleted ${deletedTodos.length} todos by ${useIndex ? 'indices' : 'IDs'}`
+      };
+    } else {
+      // Revert changes since save failed
+      this.todos = originalTodos;
+      return {
+        success: false,
+        error: saveResult.error || 'Failed to save after batch delete',
+        attempted: deletedTodos.length,
+        storage: { saved: false }
+      };
+    }
+  }
+
+  /**
+   * Preview batch delete operation (dry run)
+   * @param {Array} identifiers - Array of todo IDs or indices
+   * @param {Object} options - Options for preview
+   * @returns {Object} Preview result
+   */
+  async previewBatchDelete(identifiers, options = {}) {
+    return await this.batchDeleteTodos(identifiers, { ...options, dryRun: true });
+  }
+
+  /**
    * Update a todo item
    */
   async updateTodo(id, updates) {
