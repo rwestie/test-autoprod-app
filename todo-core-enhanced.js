@@ -535,7 +535,8 @@ class TodoCoreEnhanced {
       todosToDelete = this.todos.filter(todoData => {
         try {
           const todoInstance = new Todo(todoData);
-          return todoInstance.shouldBeIncludedInBulkDelete(operation);
+          const result = todoInstance.shouldBeIncludedInBulkDelete(operation);
+          return result.shouldDelete;
         } catch (error) {
           this.log('warn', `Failed to evaluate todo ${todoData.id} for bulk delete: ${error.message}`);
           return false;

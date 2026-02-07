@@ -126,11 +126,31 @@ class ConfirmationUtil {
       console.log('');
     }
 
-    // Show warning
-    console.log('⚠️  This action is PERMANENT and cannot be undone!');
+    // Enhanced warnings for destructive operations
+    const isVeryDestructive = operation === 'clear' || operation === 'purge';
+    const isBulkOperation = operation === 'batch' || operation === 'clean' || isVeryDestructive;
 
-    // Get confirmation
-    const confirmed = await this.askConfirmation(
+    if (isVeryDestructive) {
+      console.log('🚨 WARNING: This will delete ALL todos from your list!');
+      console.log('🚨 This includes both completed and pending items!');
+      console.log('⚠️  This action is PERMANENT and cannot be undone!');
+      console.log('💡 Consider using "clean" instead to only remove completed todos.');
+      console.log('');
+    } else if (isBulkOperation && count > 1) {
+      console.log('⚠️  This action is PERMANENT and cannot be undone!');
+      if (count >= 5) {
+        console.log(`🚨 You are about to delete ${count} todos at once!`);
+      }
+      console.log('💡 Remember: You can use "undo" command to restore recent deletions.');
+      console.log('');
+    } else {
+      console.log('⚠️  This action is PERMANENT and cannot be undone!');
+      console.log('💡 Remember: You can use "undo" command to restore recent deletions.');
+      console.log('');
+    }
+
+    // First confirmation
+    const firstConfirmed = await this.askConfirmation(
       '🗑️  Are you sure you want to proceed?',
       {
         defaultAnswer: false,
@@ -138,9 +158,32 @@ class ConfirmationUtil {
       }
     );
 
-    console.log(''); // Empty line for spacing
+    if (!firstConfirmed) {
+      return false;
+    }
 
-    return confirmed;
+    // Double confirmation for very destructive operations
+    if (isVeryDestructive && count > 3) {
+      console.log('');
+      console.log('🔴 FINAL CONFIRMATION REQUIRED');
+      console.log(`🔴 You are about to permanently delete ALL ${count} todos!`);
+      console.log('🔴 This action cannot be undone!');
+      console.log('');
+
+      const finalConfirmed = await this.askConfirmation(
+        '🔴 Type "yes" to confirm this destructive action',
+        {
+          defaultAnswer: false,
+          requireExplicit: true
+        }
+      );
+
+      console.log(''); // Empty line for spacing
+      return finalConfirmed;
+    }
+
+    console.log(''); // Empty line for spacing
+    return true;
   }
 
   /**
@@ -180,6 +223,11 @@ class ConfirmationUtil {
   static showCancellationMessage(operation) {
     console.log(`❌ ${operation} cancelled.`);
     console.log('💡 No changes have been made to your todos.');
+
+    // Add helpful context for different operations
+    if (operation.toLowerCase().includes('delete') || operation.toLowerCase().includes('clear')) {
+      console.log('💡 Tip: If you accidentally delete todos, use "undo" command to restore them.');
+    }
   }
 
   /**
