@@ -44,26 +44,89 @@ async function addTodo(description) {
   return true;
 }
 
-// List all todos
-async function listTodos() {
+// List all todos with optional filtering
+async function listTodos(filter = {}) {
   const todos = await todoCore.listTodos();
 
-  if (todos.length === 0) {
-    console.log('No todos found. Add one with: node index.js add "Your todo description"');
+  // Apply filters
+  let filteredTodos = todos;
+  let filterDescription = '';
+
+  if (filter.status) {
+    if (filter.status === 'pending') {
+      filteredTodos = filteredTodos.filter(todo => !todo.completed);
+      filterDescription = 'pending ';
+    } else if (filter.status === 'completed') {
+      filteredTodos = filteredTodos.filter(todo => todo.completed);
+      filterDescription = 'completed ';
+    }
+  }
+
+  if (filter.priority) {
+    filteredTodos = filteredTodos.filter(todo => todo.priority === filter.priority);
+    filterDescription += `${filter.priority} priority `;
+  }
+
+  if (filter.tag) {
+    filteredTodos = filteredTodos.filter(todo =>
+      todo.tags && todo.tags.includes(filter.tag)
+    );
+    filterDescription += `tagged with "${filter.tag}" `;
+  }
+
+  if (filter.search) {
+    const searchTerm = filter.search.toLowerCase();
+    filteredTodos = filteredTodos.filter(todo =>
+      todo.description.toLowerCase().includes(searchTerm)
+    );
+    filterDescription += `containing "${filter.search}" `;
+  }
+
+  // Handle empty results
+  if (filteredTodos.length === 0) {
+    if (filterDescription) {
+      console.log(`No ${filterDescription}todos found.`);
+      if (todos.length > 0) {
+        console.log(`Total todos in list: ${todos.length}`);
+        console.log('Use "node index.js list" to see all todos.');
+      }
+    } else {
+      console.log('No todos found. Add one with: node index.js add "Your todo description"');
+    }
     return;
   }
 
-  console.log('Your todos:');
+  // Show header with filter information
+  if (filterDescription) {
+    console.log(`Your ${filterDescription}todos:`);
+  } else {
+    console.log('Your todos:');
+  }
 
   // Group todos by completion status for better visual organization
-  const pendingTodos = todos.filter(todo => !todo.completed);
-  const completedTodos = todos.filter(todo => todo.completed);
+  const pendingTodos = filteredTodos.filter(todo => !todo.completed);
+  const completedTodos = filteredTodos.filter(todo => todo.completed);
 
   // Display pending todos first
   if (pendingTodos.length > 0) {
     console.log('  📋 Pending:');
     pendingTodos.forEach(todo => {
-      console.log(`    [ ] #${todo.id}: ${todo.description}`);
+      let line = `    [ ] #${todo.id}: ${todo.description}`;
+
+      // Add priority and tags if present
+      const extras = [];
+      if (todo.priority && todo.priority !== 'medium') {
+        const priorityIcon = todo.priority === 'high' ? '🔴' : '🔵';
+        extras.push(`${priorityIcon}${todo.priority}`);
+      }
+      if (todo.tags && todo.tags.length > 0) {
+        extras.push(`🏷️${todo.tags.join(', ')}`);
+      }
+      if (extras.length > 0) {
+        line += ` (${extras.join(' | ')})`;
+      }
+
+      console.log(line);
     });
   }
 
@@ -74,13 +137,33 @@ async function listTodos() {
     }
     console.log('  ✅ Completed:');
     completedTodos.forEach(todo => {
-      console.log(`    [✓] #${todo.id}: ${todo.description}`);
+      let line = `    [✓] #${todo.id}: ${todo.description}`;
+
+      // Add priority and tags if present
+      const extras = [];
+      if (todo.priority && todo.priority !== 'medium') {
+        const priorityIcon = todo.priority === 'high' ? '🔴' : '🔵';
+        extras.push(`${priorityIcon}${todo.priority}`);
+      }
+      if (todo.tags && todo.tags.length > 0) {
+        extras.push(`🏷️${todo.tags.join(', ')}`);
+      }
+      if (extras.length > 0) {
+        line += ` (${extras.join(' | ')})`;
+      }
+
+      console.log(line);
     });
   }
 
   // Show summary counts
   console.log('');
-  console.log(`📊 Summary: ${todos.length} total (${pendingTodos.length} pending, ${completedTodos.length} completed)`);
+  if (filterDescription) {
+    console.log(`📊 Filtered results: ${filteredTodos.length} ${filterDescription}todos (${pendingTodos.length} pending, ${completedTodos.length} completed)`);
+    console.log(`📊 Total in list: ${todos.length} todos`);
+  } else {
+    console.log(`📊 Summary: ${filteredTodos.length} total (${pendingTodos.length} pending, ${completedTodos.length} completed)`);
+  }
 }
 
 // Mark todo as complete
@@ -1386,7 +1469,11 @@ function showUsage() {
   console.log('');
   console.log('COMMANDS:');
   console.log('  add "description"                   - Add a new todo');
-  console.log('  list                                - List all todos');
+  console.log('  list [filter-options]               - List todos with optional filtering');
+  console.log('    --status pending                  - List only pending todos');
+  console.log('    --priority high                   - List only high priority todos');
+  console.log('    --tag work                        - List todos tagged with "work"');
+  console.log('    --search "meeting"                - Search todos containing "meeting"');
   console.log('  complete <id>                       - Mark todo as complete');
   console.log('  delete <id>                         - Delete a todo by ID (with confirmation)');
   console.log('  delete <position> --index           - Delete a todo by position (with confirmation)');
@@ -1490,15 +1577,45 @@ function showCommandHelp(command) {
     case 'ls':
       console.log('📋 LIST COMMAND HELP');
       console.log('');
-      console.log('Display all todos in your list.');
+      console.log('Display todos in your list with optional filtering options.');
       console.log('');
       console.log('📋 SYNTAX:');
-      console.log('  node index.js list');
-      console.log('  node index.js ls');
+      console.log('  node index.js list [filter-options]');
+      console.log('  node index.js ls [filter-options]');
+      console.log('');
+      console.log('🔍 FILTER OPTIONS:');
+      console.log('  --status <status>               - Filter by completion status');
+      console.log('  --priority <priority>           - Filter by priority level');
+      console.log('  --tag <tag>                     - Filter by tag');
+      console.log('  --search <text>                 - Search in todo descriptions');
+      console.log('');
+      console.log('📝 FILTER VALUES:');
+      console.log('  status: pending, completed');
+      console.log('  priority: low, medium, high');
+      console.log('  tag: any tag string');
+      console.log('  search: any text to search for');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js list              - Show all todos');
+      console.log('  node index.js list --status pending - Show only incomplete todos');
+      console.log('  node index.js list --priority high - Show only high priority todos');
+      console.log('  node index.js list --tag work   - Show todos tagged with "work"');
+      console.log('  node index.js list --search meeting - Show todos containing "meeting"');
+      console.log('');
+      console.log('🔗 COMBINING FILTERS:');
+      console.log('  node index.js list --status pending --priority high');
+      console.log('  node index.js list --tag work --search project');
+      console.log('  node index.js list --priority low --status completed');
       console.log('');
       console.log('✨ OUTPUT FORMAT:');
-      console.log('  [✓] #1: Completed todo');
-      console.log('  [ ] #2: Pending todo');
+      console.log('  [✓] #1: Completed todo (🔴high | 🏷️work)');
+      console.log('  [ ] #2: Pending todo (🔵low | 🏷️personal, urgent)');
+      console.log('');
+      console.log('💡 TIPS:');
+      console.log('  • Filters can be combined for more specific results');
+      console.log('  • Search is case-insensitive');
+      console.log('  • Priority and tag information is shown when available');
+      console.log('  • Use quotes for search terms with spaces: --search "team meeting"');
       break;
     case 'complete':
     case 'done':
@@ -1680,7 +1797,70 @@ function parseArguments() {
       return { command: 'add', description: filteredArgs.slice(1).join(' '), ...parsed };
     case 'list':
     case 'ls':
-      return { command: 'list', ...parsed };
+      // Parse list filters: list --status pending --priority high --tag work --search "meeting"
+      const listFilters = {};
+      let remainingArgs = [...filteredArgs.slice(1)];
+
+      // Parse filter arguments
+      for (let i = 0; i < remainingArgs.length; i++) {
+        const arg = remainingArgs[i];
+
+        if (arg === '--status' && i + 1 < remainingArgs.length) {
+          const status = remainingArgs[i + 1].toLowerCase();
+          if (['pending', 'completed'].includes(status)) {
+            listFilters.status = status;
+          } else {
+            console.error(`❌ Error: Invalid status "${remainingArgs[i + 1]}". Must be "pending" or "completed"`);
+            process.exit(1);
+          }
+          i++; // Skip next argument as it's the value
+        } else if (arg === '--priority' && i + 1 < remainingArgs.length) {
+          const priority = remainingArgs[i + 1].toLowerCase();
+          if (['low', 'medium', 'high'].includes(priority)) {
+            listFilters.priority = priority;
+          } else {
+            console.error(`❌ Error: Invalid priority "${remainingArgs[i + 1]}". Must be "low", "medium", or "high"`);
+            process.exit(1);
+          }
+          i++; // Skip next argument as it's the value
+        } else if (arg === '--tag' && i + 1 < remainingArgs.length) {
+          listFilters.tag = remainingArgs[i + 1];
+          i++; // Skip next argument as it's the value
+        } else if (arg === '--search' && i + 1 < remainingArgs.length) {
+          listFilters.search = remainingArgs[i + 1];
+          i++; // Skip next argument as it's the value
+        } else if (arg.startsWith('--status=')) {
+          const status = arg.split('=', 2)[1].toLowerCase();
+          if (['pending', 'completed'].includes(status)) {
+            listFilters.status = status;
+          } else {
+            console.error(`❌ Error: Invalid status "${arg.split('=', 2)[1]}". Must be "pending" or "completed"`);
+            process.exit(1);
+          }
+        } else if (arg.startsWith('--priority=')) {
+          const priority = arg.split('=', 2)[1].toLowerCase();
+          if (['low', 'medium', 'high'].includes(priority)) {
+            listFilters.priority = priority;
+          } else {
+            console.error(`❌ Error: Invalid priority "${arg.split('=', 2)[1]}". Must be "low", "medium", or "high"`);
+            process.exit(1);
+          }
+        } else if (arg.startsWith('--tag=')) {
+          listFilters.tag = arg.split('=', 2)[1];
+        } else if (arg.startsWith('--search=')) {
+          listFilters.search = arg.split('=', 2)[1];
+        } else if (arg.startsWith('--')) {
+          console.error(`❌ Error: Unknown filter option "${arg}"`);
+          console.error('Available filters: --status, --priority, --tag, --search');
+          process.exit(1);
+        } else {
+          console.error(`❌ Error: Unexpected argument "${arg}"`);
+          console.error('Use "node index.js help list" for usage information');
+          process.exit(1);
+        }
+      }
+
+      return { command: 'list', filter: listFilters, ...parsed };
     case 'complete':
     case 'done':
       return { command: 'complete', id: filteredArgs[1], ...parsed };
@@ -1859,7 +2039,7 @@ async function main() {
         success = await addTodo(parsed.description);
         break;
       case 'list':
-        await listTodos();
+        await listTodos(parsed.filter || {});
         break;
       case 'complete':
         success = await completeTodo(parsed.id);
