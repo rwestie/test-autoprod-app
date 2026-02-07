@@ -85,9 +85,19 @@ class TodoCore {
   }
 
   deleteTodo(id) {
+    // Handle edge case: empty todo list
+    if (this.todos.length === 0) {
+      return { success: false, error: 'No todos available to delete' };
+    }
+
+    // Handle edge case: null or undefined identifier
+    if (id === null || id === undefined) {
+      return { success: false, error: 'ID is required' };
+    }
+
     const numId = parseInt(id);
     if (isNaN(numId)) {
-      return { success: false, error: 'Invalid ID format' };
+      return { success: false, error: 'Invalid ID format - must be a number' };
     }
 
     const todoIndex = this.todos.findIndex(t => t.id === numId);
@@ -96,12 +106,24 @@ class TodoCore {
     }
 
     const todo = this.todos[todoIndex];
+
+    // Create a backup copy for atomic operation rollback
+    const todoBackup = { ...todo };
+
+    // Perform the deletion
     this.todos.splice(todoIndex, 1);
 
+    // Attempt to save with error recovery
     if (this.saveTodos()) {
-      return { success: true, todo };
+      return {
+        success: true,
+        todo: todoBackup,
+        message: `Todo deleted successfully (ID: ${todoBackup.id})`
+      };
     } else {
-      return { success: false, error: 'Failed to save todo' };
+      // Restore the todo if save failed (rollback for atomic operation)
+      this.todos.splice(todoIndex, 0, todoBackup);
+      return { success: false, error: 'Failed to save changes - deletion rolled back' };
     }
   }
 }
