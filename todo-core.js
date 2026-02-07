@@ -1,14 +1,91 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { StorageConfig } = require('./storage-config');
 
 class TodoCore {
-  constructor(dataFile = null) {
-    this.dataFile = dataFile || this.getDefaultDataFile();
-    this.backupFile = this.dataFile + '.backup';
-    this.tempFile = this.dataFile + '.tmp';
+  constructor(dataFile = null, config = null) {
+    // Support both legacy dataFile parameter and new config system
+    if (dataFile && typeof dataFile === 'object') {
+      // If first parameter is an object, treat it as config
+      this.config = dataFile instanceof StorageConfig ? dataFile : new StorageConfig(dataFile);
+      this.dataFile = this.config.getDataFilePath();
+    } else {
+      // Legacy constructor - create config with legacy behavior for backward compatibility
+      const legacyConfig = {
+        backupRetention: 1, // Keep single backup for legacy compatibility
+        enableLogging: true,
+        logLevel: 'info'
+      };
+
+      if (dataFile) {
+        // Extract directory and filename from provided path
+        const dir = path.dirname(dataFile);
+        const filename = path.basename(dataFile);
+        legacyConfig.dataDir = dir;
+        legacyConfig.dataFile = filename;
+      }
+
+      this.config = config || new StorageConfig(legacyConfig);
+      this.dataFile = dataFile || this.config.getDataFilePath();
+    }
+
+    this.backupFile = this.config.getBackupFilePath();
+    this.tempFile = this.config.getTempFilePath();
     this.todos = this.loadTodos();
     this.nextId = this.getNextId();
+  }
+
+  // Enhanced logging system
+  log(level, message, data = null) {
+    if (!this.config.options.enableLogging) return;
+
+    const levels = { debug: 0, info: 1, warn: 2, error: 3 };
+    const configLevel = levels[this.config.options.logLevel] || 1;
+    const messageLevel = levels[level] || 1;
+
+    if (messageLevel >= configLevel) {
+      const timestamp = new Date().toISOString();
+      const prefix = {
+        debug: '🔍',
+        info: 'ℹ️',
+        warn: '⚠️',
+        error: '❌'
+      }[level] || 'ℹ️';
+
+      if (data) {
+        console.log(`${prefix} [${timestamp}] ${message}`, data);
+      } else {
+        console.log(`${prefix} [${timestamp}] ${message}`);
+      }
+    }
+  }
+
+  // Storage performance monitoring
+  getStorageStats() {
+    const stats = {
+      todoCount: this.todos.length,
+      dataFile: this.dataFile,
+      fileExists: fs.existsSync(this.dataFile),
+      backupExists: fs.existsSync(this.backupFile),
+      fileSize: 0,
+      lastModified: null,
+      storageHealth: 'unknown'
+    };
+
+    try {
+      if (stats.fileExists) {
+        const fileStats = fs.statSync(this.dataFile);
+        stats.fileSize = fileStats.size;
+        stats.lastModified = fileStats.mtime.toISOString();
+        stats.storageHealth = 'healthy';
+      }
+    } catch (error) {
+      stats.storageHealth = 'error';
+      this.log('error', 'Error getting storage stats', error.message);
+    }
+
+    return stats;
   }
 
   getDefaultDataFile() {
@@ -19,8 +96,10 @@ class TodoCore {
     // Ensure the directory exists
     if (!fs.existsSync(todosDir)) {
       try {
-        fs.mkdirSync(todosDir, { recursive: true });
+        fs.mkdirSync(todosDir, { recursive: true, mode: this.config.options.dirMode });
+        this.log('info', 'Created todos directory', todosDir);
       } catch (error) {
+        this.log('warn', 'Failed to create home directory, falling back to current directory', error.message);
         // Fall back to current directory if we can't create home directory
         return './todos.json';
       }
@@ -147,41 +226,116 @@ class TodoCore {
     return [];
   }
 
-  saveTodos() {
+  rotateBackups() {
+    if (!this.config.options.enableBackups || this.config.options.backupRetention <= 1) {
+      return; // Don't rotate if we only want 1 backup or backups are disabled
+    }
+
     try {
-      // Create backup of current file before saving
-      if (fs.existsSync(this.dataFile)) {
-        fs.copyFileSync(this.dataFile, this.backupFile);
-        console.log(`💾 Created backup before saving changes`);
-      }
+      // Rotate existing numbered backups
+      for (let i = this.config.options.backupRetention - 1; i >= 1; i--) {
+        const oldBackup = this.config.getRotatedBackupPath(i);
+        const newBackup = this.config.getRotatedBackupPath(i + 1);
 
-      // Atomic write: write to temp file first, then rename
-      const data = JSON.stringify(this.todos, null, 2);
-      fs.writeFileSync(this.tempFile, data);
-
-      // Verify the temp file can be parsed before finalizing
-      const verification = fs.readFileSync(this.tempFile, 'utf8');
-      JSON.parse(verification); // This will throw if invalid JSON
-
-      // Atomic move to final location
-      fs.renameSync(this.tempFile, this.dataFile);
-
-      console.log(`✅ Successfully saved ${this.todos.length} todo${this.todos.length === 1 ? '' : 's'} to storage`);
-      return { success: true, count: this.todos.length, location: this.dataFile };
-    } catch (error) {
-      console.error(`❌ Error saving todos to ${this.dataFile}:`, error.message);
-
-      // Clean up temp file if it exists
-      if (fs.existsSync(this.tempFile)) {
-        try {
-          fs.unlinkSync(this.tempFile);
-          console.log('🧹 Cleaned up temporary file after save failure');
-        } catch (cleanupError) {
-          console.error('❌ Error cleaning up temp file:', cleanupError.message);
+        if (fs.existsSync(oldBackup)) {
+          if (i === this.config.options.backupRetention - 1) {
+            // Delete the oldest backup
+            fs.unlinkSync(oldBackup);
+            this.log('debug', `Removed oldest backup: ${oldBackup}`);
+          } else {
+            fs.renameSync(oldBackup, newBackup);
+            this.log('debug', `Rotated backup: ${oldBackup} -> ${newBackup}`);
+          }
         }
       }
 
-      return { success: false, error: error.message };
+      // If we have more than 1 backup retention, move current backup to backup.1
+      // Otherwise, keep it as .backup for backward compatibility
+      if (this.config.options.backupRetention > 1 && fs.existsSync(this.backupFile)) {
+        const firstBackup = this.config.getRotatedBackupPath(1);
+        fs.copyFileSync(this.backupFile, firstBackup);
+        this.log('debug', `Copied current backup to: ${firstBackup}`);
+      }
+    } catch (error) {
+      this.log('warn', 'Error during backup rotation', error.message);
+    }
+  }
+
+  saveTodos() {
+    const startTime = Date.now();
+
+    for (let attempt = 1; attempt <= this.config.options.maxRetries + 1; attempt++) {
+      try {
+        // Create backup of current file before saving
+        if (fs.existsSync(this.dataFile) && this.config.options.enableBackups) {
+          this.rotateBackups();
+          fs.copyFileSync(this.dataFile, this.backupFile);
+          this.log('info', 'Created backup before saving changes');
+        }
+
+        // Prepare data for saving
+        const data = JSON.stringify(this.todos, null, 2);
+
+        // Write to temp file first for atomic operation
+        if (this.config.options.useTempFiles) {
+          fs.writeFileSync(this.tempFile, data, { mode: this.config.options.fileMode });
+
+          // Verify the temp file can be parsed before finalizing
+          const verification = fs.readFileSync(this.tempFile, 'utf8');
+          JSON.parse(verification); // This will throw if invalid JSON
+
+          // Atomic move to final location
+          fs.renameSync(this.tempFile, this.dataFile);
+        } else {
+          // Direct write (for testing or specific scenarios)
+          fs.writeFileSync(this.dataFile, data, { mode: this.config.options.fileMode });
+        }
+
+        const duration = Date.now() - startTime;
+        this.log('info', `Successfully saved ${this.todos.length} todo${this.todos.length === 1 ? '' : 's'} to storage`);
+        this.log('debug', `Save operation completed in ${duration}ms`);
+
+        return {
+          success: true,
+          count: this.todos.length,
+          location: this.dataFile,
+          duration,
+          attempt
+        };
+
+      } catch (error) {
+        this.log('error', `Save attempt ${attempt} failed: ${error.message}`);
+
+        // Clean up temp file if it exists
+        if (fs.existsSync(this.tempFile)) {
+          try {
+            fs.unlinkSync(this.tempFile);
+            this.log('debug', 'Cleaned up temporary file after save failure');
+          } catch (cleanupError) {
+            this.log('error', 'Error cleaning up temp file', cleanupError.message);
+          }
+        }
+
+        // Retry logic
+        if (attempt <= this.config.options.maxRetries) {
+          const delay = this.config.options.retryDelay * attempt;
+          this.log('warn', `Retrying save operation in ${delay}ms (attempt ${attempt}/${this.config.options.maxRetries})`);
+
+          // Wait before retry (in real app, use setTimeout)
+          const start = Date.now();
+          while (Date.now() - start < delay) {
+            // Busy wait for simplicity
+          }
+        } else {
+          // All retries exhausted
+          return {
+            success: false,
+            error: error.message,
+            attempts: attempt - 1,
+            duration: Date.now() - startTime
+          };
+        }
+      }
     }
   }
 
@@ -230,9 +384,27 @@ class TodoCore {
 
     const saveResult = this.saveTodos();
     if (saveResult.success) {
-      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
+      return {
+        success: true,
+        todo,
+        storage: {
+          saved: true,
+          count: saveResult.count,
+          location: saveResult.location,
+          duration: saveResult.duration,
+          attempt: saveResult.attempt
+        }
+      };
     } else {
-      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
+      return {
+        success: false,
+        error: saveResult.error || 'Failed to save todo',
+        storage: {
+          saved: false,
+          attempts: saveResult.attempts,
+          duration: saveResult.duration
+        }
+      };
     }
   }
 
@@ -260,9 +432,27 @@ class TodoCore {
 
     const saveResult = this.saveTodos();
     if (saveResult.success) {
-      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
+      return {
+        success: true,
+        todo,
+        storage: {
+          saved: true,
+          count: saveResult.count,
+          location: saveResult.location,
+          duration: saveResult.duration,
+          attempt: saveResult.attempt
+        }
+      };
     } else {
-      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
+      return {
+        success: false,
+        error: saveResult.error || 'Failed to save todo',
+        storage: {
+          saved: false,
+          attempts: saveResult.attempts,
+          duration: saveResult.duration
+        }
+      };
     }
   }
 
