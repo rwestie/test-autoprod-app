@@ -1,38 +1,26 @@
 #!/usr/bin/env node
 
-const { TodoCore } = require('./todo-core');
-const { AutoSaveIntegration } = require('./autosave-integration');
-const { AutoSaveConfig } = require('./autosave-config');
+const { TodoCoreEnhanced } = require('./todo-core-enhanced');
 const { StorageConfig } = require('./storage-config');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
-let autoSaveTodoCore = null;
 
 // Initialize todo core with storage options
-function initializeTodoCore(storageOptions = {}) {
+async function initializeTodoCore(storageOptions = {}) {
   // Create storage configuration
   const storageConfig = StorageConfig.fromEnvironment().merge(storageOptions);
 
-  // Create auto-save configuration based on environment
-  let autoSaveConfig;
-  if (process.env.NODE_ENV === 'development') {
-    autoSaveConfig = AutoSaveConfig.development();
-  } else if (process.env.NODE_ENV === 'production') {
-    autoSaveConfig = AutoSaveConfig.production();
-  } else {
-    // Try to load from environment, fallback to default
-    autoSaveConfig = AutoSaveConfig.fromEnvironment();
-  }
+  // Create a TodoCoreEnhanced instance with the new storage interface
+  todoCore = new TodoCoreEnhanced(storageConfig, null, 'json-file');
 
-  // Create a TodoCore instance with storage config and auto-save integration
-  todoCore = new TodoCore(storageConfig);
-  autoSaveTodoCore = new AutoSaveIntegration(todoCore, autoSaveConfig);
+  // Ensure initialization is complete
+  await todoCore.initialize();
 }
 
 // Add a new todo
-function addTodo(description) {
-  const result = autoSaveTodoCore.addTodo(description);
+async function addTodo(description) {
+  const result = await todoCore.addTodo(description);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -44,17 +32,20 @@ function addTodo(description) {
 
   console.log(`✅ Added todo #${result.todo.id}: ${result.todo.description}`);
 
-  // Display auto-save messages
-  if (result.autoSaveMessages) {
-    result.autoSaveMessages.forEach(msg => console.log(msg));
+  // Display storage info if available
+  if (result.storage && result.storage.saved) {
+    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+    if (result.storage.duration !== undefined) {
+      console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+    }
   }
 
   return true;
 }
 
 // List all todos
-function listTodos() {
-  const todos = autoSaveTodoCore.listTodos();
+async function listTodos() {
+  const todos = await todoCore.listTodos();
 
   if (todos.length === 0) {
     console.log('No todos found. Add one with: node index.js add "Your todo description"');
@@ -69,8 +60,8 @@ function listTodos() {
 }
 
 // Mark todo as complete
-function completeTodo(id) {
-  const result = autoSaveTodoCore.completeTodo(id);
+async function completeTodo(id) {
+  const result = await todoCore.completeTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -85,17 +76,20 @@ function completeTodo(id) {
   } else {
     console.log(`✅ Marked todo #${result.todo.id} as complete: ${result.todo.description}`);
 
-    // Display auto-save messages
-    if (result.autoSaveMessages) {
-      result.autoSaveMessages.forEach(msg => console.log(msg));
+    // Display storage info if available
+    if (result.storage && result.storage.saved) {
+      console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+      if (result.storage.duration !== undefined) {
+        console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+      }
     }
   }
   return true;
 }
 
 // Delete a todo
-function deleteTodo(id) {
-  const result = autoSaveTodoCore.deleteTodo(id);
+async function deleteTodo(id) {
+  const result = await todoCore.deleteTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -110,13 +104,13 @@ function deleteTodo(id) {
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
 
-  // Display auto-save messages
-  if (result.autoSaveMessages) {
-    result.autoSaveMessages.forEach(msg => console.log(msg));
+  // Display storage info if available
+  if (result.storage && result.storage.saved) {
+    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
   }
 
   // Show count of remaining todos
-  const remaining = autoSaveTodoCore.listTodos();
+  const remaining = await todoCore.listTodos();
   const remainingCount = remaining.length;
   const pendingCount = remaining.filter(t => !t.completed).length;
   const completedCount = remaining.filter(t => t.completed).length;
@@ -211,12 +205,12 @@ function showCleanupHelp() {
 }
 
 // Show storage configuration
-function showStorageConfig() {
+async function showStorageConfig() {
   console.log('💾 STORAGE CONFIGURATION');
   console.log('');
 
   const config = todoCore.config;
-  const stats = todoCore.getStorageStats();
+  const stats = await todoCore.getStorageStats();
 
   console.log('📁 CURRENT SETTINGS:');
   console.log(`  Data directory: ${config.options.dataDir}`);
@@ -356,63 +350,44 @@ function showConfigHelp() {
   console.log('  • The default location is ~/.todos/todos.json');
 }
 
-// Show auto-save status and performance
-function showAutoSaveStatus() {
-  console.log('💾 AUTO-SAVE STATUS');
+// Show storage status and performance
+async function showStorageStatus() {
+  console.log('💾 STORAGE STATUS');
   console.log('');
 
-  const config = autoSaveTodoCore.getConfig();
-  const healthCheck = autoSaveTodoCore.performHealthCheck();
+  const stats = await todoCore.getStorageStats();
+  const healthCheck = await todoCore.performHealthCheck();
 
   console.log('⚙️  CONFIGURATION:');
-  console.log(`  Auto-save enabled: ${config.isEnabled() ? '✅ Yes' : '❌ No'}`);
-  console.log(`  Show progress: ${config.shouldShowProgress() ? '✅ Yes' : '❌ No'}`);
-  console.log(`  Show timing: ${config.shouldShowTiming() ? '✅ Yes' : '❌ No'}`);
-  console.log(`  Track performance: ${config.shouldTrackPerformance() ? '✅ Yes' : '❌ No'}`);
-  console.log(`  Verbose logging: ${config.shouldShowVerbose() ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Storage type: JSON file storage`);
+  console.log(`  Auto-save enabled: ✅ Yes (built-in persistence)`);
+  console.log(`  Data directory: ${todoCore.config.options.dataDir}`);
+  console.log(`  Data file: ${todoCore.config.options.dataFile}`);
+  console.log(`  Backups enabled: ${todoCore.config.options.enableBackups ? '✅ Yes' : '❌ No'}`);
   console.log('');
 
-  if (healthCheck) {
+  if (stats) {
     console.log('🏥 STORAGE HEALTH:');
-    console.log(`  Status: ${healthCheck.storage.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
-    console.log(`  Todo count: ${healthCheck.storage.todoCount}`);
-    console.log(`  Data file exists: ${healthCheck.storage.fileExists ? '✅ Yes' : '❌ No'}`);
-    console.log(`  Backup exists: ${healthCheck.storage.backupExists ? '✅ Yes' : '❌ No'}`);
-    if (healthCheck.storage.fileSize !== undefined) {
-      console.log(`  File size: ${healthCheck.storage.fileSize} bytes`);
+    console.log(`  Status: ${healthCheck.success ? '✅ Healthy' : '❌ Unhealthy'}`);
+    console.log(`  Todo count: ${stats.todoCount}`);
+    console.log(`  Data file exists: ${stats.fileExists ? '✅ Yes' : '❌ No'}`);
+    console.log(`  Backup exists: ${stats.backupExists ? '✅ Yes' : '❌ No'}`);
+    if (stats.fileSize !== undefined) {
+      console.log(`  File size: ${stats.fileSize} bytes`);
+    }
+    if (stats.lastModified) {
+      console.log(`  Last modified: ${stats.lastModified}`);
     }
     console.log('');
-
-    if (healthCheck.performance) {
-      const perf = healthCheck.performance;
-      console.log('📊 PERFORMANCE STATISTICS:');
-      console.log(`  Total operations: ${perf.totalOperations}`);
-      console.log(`  Successful saves: ${perf.successfulSaves}`);
-      console.log(`  Failed saves: ${perf.failedSaves}`);
-      console.log(`  Success rate: ${perf.successRate}%`);
-      if (perf.averageDuration) {
-        console.log(`  Average save time: ${perf.averageDuration}ms`);
-      }
-      if (perf.fastestSave !== null) {
-        console.log(`  Fastest save: ${perf.fastestSave}ms`);
-      }
-      if (perf.slowestSave !== null) {
-        console.log(`  Slowest save: ${perf.slowestSave}ms`);
-      }
-      if (perf.totalRetries > 0) {
-        console.log(`  Total retries used: ${perf.totalRetries}`);
-      }
-      console.log('');
-    }
   }
 
   console.log('🔧 CONFIGURATION OPTIONS:');
-  console.log('  Set TODO_AUTOSAVE_ENABLED=false to disable auto-save');
-  console.log('  Set TODO_AUTOSAVE_SHOW_PROGRESS=false to hide progress messages');
-  console.log('  Set TODO_AUTOSAVE_SHOW_TIMING=true to show save timing');
-  console.log('  Set TODO_AUTOSAVE_VERBOSE=true for detailed logging');
-  console.log('  Set NODE_ENV=development for verbose auto-save mode');
-  console.log('  Set NODE_ENV=production for minimal auto-save messages');
+  console.log('  Environment variables:');
+  console.log('  TODO_DATA_DIR                       - Set data directory');
+  console.log('  TODO_DATA_FILE                      - Set data filename');
+  console.log('  TODO_ENABLE_BACKUPS                 - Enable backups (true/false)');
+  console.log('  TODO_BACKUP_RETENTION               - Number of backups to keep');
+  console.log('  TODO_LOG_LEVEL                      - Logging level (debug/info/warn/error)');
 }
 
 // Show usage information
@@ -666,73 +641,81 @@ function validateCommand(parsed) {
 }
 
 // Main function
-function main() {
+async function main() {
   const parsed = parseArguments();
 
-  // Initialize TodoCore with storage options from command line
-  initializeTodoCore(parsed.storageOptions || {});
+  try {
+    // Initialize TodoCore with storage options from command line
+    await initializeTodoCore(parsed.storageOptions || {});
 
-  if (!validateCommand(parsed)) {
-    process.exit(1);
-  }
+    if (!validateCommand(parsed)) {
+      process.exit(1);
+    }
 
-  let success = true;
+    let success = true;
 
-  switch (parsed.command) {
-    case 'add':
-      success = addTodo(parsed.description);
-      break;
-    case 'list':
-      listTodos();
-      break;
-    case 'complete':
-      success = completeTodo(parsed.id);
-      break;
-    case 'delete':
-      success = deleteTodo(parsed.id);
-      break;
-    case 'clean':
-      console.log('🧹 Clean command (delete completed todos) - Coming soon!');
-      console.log('💡 Use "node index.js help clean" to see detailed documentation.');
-      break;
-    case 'clear':
-      console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
-      console.log('💡 Use "node index.js help clear" to see detailed documentation.');
-      break;
-    case 'config':
-      if (parsed.subcommand === 'show' || !parsed.subcommand) {
-        showStorageConfig();
-      } else if (parsed.subcommand === 'set' && parsed.args && parsed.args.length >= 2) {
-        success = setStorageConfig(parsed.args[0], parsed.args[1]);
-      } else if (parsed.subcommand === 'set') {
-        console.error('❌ Error: Set command requires option and value');
-        console.error('Usage: node index.js config set <option> <value>');
-        success = false;
-      } else {
-        console.error(`❌ Error: Unknown config subcommand "${parsed.subcommand}"`);
-        console.error('Available subcommands: show, set');
-        console.error('Use "node index.js help config" for detailed help');
-        success = false;
-      }
-      break;
-    case 'autosave':
-      showAutoSaveStatus();
-      break;
-    case 'help':
-      if (parsed.subcommand) {
-        showCommandHelp(parsed.subcommand);
-      } else {
-        showUsage();
-      }
-      break;
-  }
+    switch (parsed.command) {
+      case 'add':
+        success = await addTodo(parsed.description);
+        break;
+      case 'list':
+        await listTodos();
+        break;
+      case 'complete':
+        success = await completeTodo(parsed.id);
+        break;
+      case 'delete':
+        success = await deleteTodo(parsed.id);
+        break;
+      case 'clean':
+        console.log('🧹 Clean command (delete completed todos) - Coming soon!');
+        console.log('💡 Use "node index.js help clean" to see detailed documentation.');
+        break;
+      case 'clear':
+        console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
+        console.log('💡 Use "node index.js help clear" to see detailed documentation.');
+        break;
+      case 'config':
+        if (parsed.subcommand === 'show' || !parsed.subcommand) {
+          await showStorageConfig();
+        } else if (parsed.subcommand === 'set' && parsed.args && parsed.args.length >= 2) {
+          success = setStorageConfig(parsed.args[0], parsed.args[1]);
+        } else if (parsed.subcommand === 'set') {
+          console.error('❌ Error: Set command requires option and value');
+          console.error('Usage: node index.js config set <option> <value>');
+          success = false;
+        } else {
+          console.error(`❌ Error: Unknown config subcommand "${parsed.subcommand}"`);
+          console.error('Available subcommands: show, set');
+          console.error('Use "node index.js help config" for detailed help');
+          success = false;
+        }
+        break;
+      case 'autosave':
+        await showStorageStatus();
+        break;
+      case 'help':
+        if (parsed.subcommand) {
+          showCommandHelp(parsed.subcommand);
+        } else {
+          showUsage();
+        }
+        break;
+    }
 
-  if (!success) {
+    if (!success) {
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('❌ Fatal error:', error.message);
     process.exit(1);
   }
 }
 
 // Run the app
 if (require.main === module) {
-  main();
+  main().catch(error => {
+    console.error('❌ Fatal error:', error.message);
+    process.exit(1);
+  });
 }
