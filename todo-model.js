@@ -373,6 +373,94 @@ class Todo {
   }
 
   /**
+   * Check if the todo can be safely deleted
+   * @returns {boolean} True if the todo can be deleted
+   */
+  canBeDeleted() {
+    // All todos can be deleted by default
+    // This method can be extended for future business rules
+    // e.g., prevent deletion of certain high-priority items, etc.
+    return true;
+  }
+
+  /**
+   * Get delete confirmation message for this todo
+   * @returns {string} Confirmation message
+   */
+  getDeleteConfirmationMessage() {
+    const status = this.completed ? 'completed' : 'pending';
+    const priorityInfo = this.priority !== 'medium' ? ` (${this.priority} priority)` : '';
+    const tagInfo = this.tags.length > 0 ? ` [${this.tags.join(', ')}]` : '';
+    const dueInfo = this.dueDate ? ` (due: ${new Date(this.dueDate).toLocaleDateString()})` : '';
+
+    return `Delete ${status} todo "${this.description}"${priorityInfo}${tagInfo}${dueInfo}?`;
+  }
+
+  /**
+   * Get metadata relevant for delete operations
+   * @returns {Object} Delete-relevant metadata
+   */
+  getDeleteMetadata() {
+    return {
+      id: this.id,
+      description: this.description,
+      completed: this.completed,
+      priority: this.priority,
+      tags: [...this.tags],
+      dueDate: this.dueDate,
+      createdAt: this.createdAt,
+      completedAt: this.completedAt,
+      isOverdue: this.isOverdue(),
+      hasHighPriority: this.priority === 'high',
+      hasWorkTag: this.tags.includes('work'),
+      daysSinceCreated: Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24))
+    };
+  }
+
+  /**
+   * Check if this todo should be included in bulk delete operations
+   * @param {string} operation - Type of bulk operation ('clean', 'clear', 'overdue', etc.)
+   * @returns {boolean} True if todo should be deleted in this operation
+   */
+  shouldBeIncludedInBulkDelete(operation) {
+    switch (operation.toLowerCase()) {
+      case 'clean':
+      case 'cleanup':
+        // Only delete completed todos
+        return this.completed;
+
+      case 'clear':
+      case 'purge':
+        // Delete all todos
+        return true;
+
+      case 'overdue':
+        // Delete overdue incomplete todos
+        return !this.completed && this.isOverdue();
+
+      case 'completed':
+        // Delete only completed todos (same as clean)
+        return this.completed;
+
+      case 'pending':
+        // Delete only pending todos
+        return !this.completed;
+
+      case 'low-priority':
+        // Delete low priority todos
+        return this.priority === 'low';
+
+      case 'old':
+        // Delete todos older than 30 days
+        const daysSinceCreated = Math.floor((new Date() - new Date(this.createdAt)) / (1000 * 60 * 60 * 24));
+        return daysSinceCreated > 30;
+
+      default:
+        return false;
+    }
+  }
+
+  /**
    * Get a plain object representation of the todo
    * @returns {Object} Plain object representation
    */
@@ -500,6 +588,50 @@ class Todo {
         format: 'date-time',
         required: false,
         description: 'Completion timestamp'
+      }
+    };
+  }
+
+  /**
+   * Get available bulk delete operations
+   * @returns {Object} Available bulk delete operations with descriptions
+   */
+  static getBulkDeleteOperations() {
+    return {
+      clean: {
+        name: 'clean',
+        aliases: ['cleanup'],
+        description: 'Delete all completed todos',
+        filter: 'completed',
+        safety: 'medium'
+      },
+      clear: {
+        name: 'clear',
+        aliases: ['purge'],
+        description: 'Delete ALL todos (completed and pending)',
+        filter: 'all',
+        safety: 'high'
+      },
+      overdue: {
+        name: 'overdue',
+        aliases: ['expired'],
+        description: 'Delete overdue incomplete todos',
+        filter: 'overdue',
+        safety: 'medium'
+      },
+      old: {
+        name: 'old',
+        aliases: ['archive'],
+        description: 'Delete todos older than 30 days',
+        filter: 'old',
+        safety: 'medium'
+      },
+      'low-priority': {
+        name: 'low-priority',
+        aliases: ['low'],
+        description: 'Delete low priority todos',
+        filter: 'priority',
+        safety: 'low'
       }
     };
   }

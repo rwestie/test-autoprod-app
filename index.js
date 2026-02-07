@@ -124,6 +124,126 @@ async function deleteTodo(id) {
   return true;
 }
 
+// Clean completed todos (bulk delete)
+async function cleanCompletedTodos(options = {}) {
+  console.log('🧹 CLEANING COMPLETED TODOS');
+  console.log('');
+
+  // Preview what will be deleted
+  const previewResult = await todoCore.previewBulkDelete('clean');
+
+  if (!previewResult.success) {
+    console.error(`❌ Error: ${previewResult.error}`);
+    return false;
+  }
+
+  if (previewResult.count === 0) {
+    console.log('✨ No completed todos to clean up.');
+    console.log('💡 Use "node index.js list" to see your current todos.');
+    return true;
+  }
+
+  console.log(`📋 Found ${previewResult.count} completed todos to delete:`);
+  previewResult.toBeDeleted.forEach(todo => {
+    console.log(`  [✓] #${todo.id}: ${todo.description}`);
+  });
+  console.log('');
+
+  // Confirm deletion
+  if (!options.force) {
+    console.log('⚠️  This action is PERMANENT and cannot be undone!');
+    console.log('💡 Add --force to skip this confirmation: node index.js clean --force');
+    console.log('');
+    // For now, require --force flag
+    console.log('❌ Confirmation required. Add --force flag to proceed.');
+    return false;
+  }
+
+  // Perform the cleanup
+  const result = await todoCore.cleanCompletedTodos();
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
+    return false;
+  }
+
+  console.log(`✅ Successfully cleaned up ${result.count} completed todos!`);
+
+  // Display storage info if available
+  if (result.storage && result.storage.saved) {
+    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+  }
+
+  // Show remaining todos
+  console.log(`📊 Remaining todos: ${result.remaining} total`);
+  if (result.remaining === 0) {
+    console.log('📝 All todos cleaned! Add new ones with: node index.js add "Description"');
+  }
+
+  return true;
+}
+
+// Clear all todos (bulk delete everything)
+async function clearAllTodos(options = {}) {
+  console.log('🗑️  CLEARING ALL TODOS');
+  console.log('');
+
+  // Preview what will be deleted
+  const previewResult = await todoCore.previewBulkDelete('clear');
+
+  if (!previewResult.success) {
+    console.error(`❌ Error: ${previewResult.error}`);
+    return false;
+  }
+
+  if (previewResult.count === 0) {
+    console.log('✨ No todos to clear.');
+    return true;
+  }
+
+  console.log(`📋 Found ${previewResult.count} todos to delete (EVERYTHING):`);
+  previewResult.toBeDeleted.forEach(todo => {
+    const status = todo.completed ? '✓' : ' ';
+    console.log(`  [${status}] #${todo.id}: ${todo.description}`);
+  });
+  console.log('');
+
+  // Confirm deletion - this is a very destructive operation
+  if (!options.force) {
+    console.log('🚨 WARNING: This will delete ALL todos (both pending and completed)!');
+    console.log('⚠️  This action is PERMANENT and cannot be undone!');
+    console.log('💡 Add --force to confirm: node index.js clear --force');
+    console.log('');
+    console.log('❌ Confirmation required. Add --force flag to proceed.');
+    return false;
+  }
+
+  // Perform the clear
+  const result = await todoCore.clearAllTodos({ force: true });
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
+    return false;
+  }
+
+  console.log(`✅ Successfully cleared ${result.count} todos!`);
+
+  // Display storage info if available
+  if (result.storage && result.storage.saved) {
+    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+  }
+
+  console.log('📝 Todo list is now empty. Add new todos with: node index.js add "Description"');
+
+  return true;
+}
+
 // Show detailed help for delete command
 function showDeleteHelp() {
   console.log('🗑️  DELETE COMMAND HELP');
@@ -893,8 +1013,10 @@ function parseArguments() {
     storageOptions: {}
   };
 
-  // Extract global storage options first
+  // Extract global storage options and flags first
   const filteredArgs = [];
+  let forceFlag = false;
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
@@ -908,10 +1030,14 @@ function parseArguments() {
       parsed.storageOptions.dataDir = arg.split('=', 2)[1];
     } else if (arg.startsWith('--data-file=')) {
       parsed.storageOptions.dataFile = arg.split('=', 2)[1];
+    } else if (arg === '--force') {
+      forceFlag = true;
     } else {
       filteredArgs.push(arg);
     }
   }
+
+  parsed.force = forceFlag;
 
   if (filteredArgs.length === 0) {
     return { command: 'list', ...parsed };
@@ -934,10 +1060,10 @@ function parseArguments() {
       return { command: 'delete', id: filteredArgs[1], ...parsed };
     case 'clean':
     case 'cleanup':
-      return { command: 'clean', ...parsed };
+      return { command: 'clean', force: parsed.force, ...parsed };
     case 'clear':
     case 'purge':
-      return { command: 'clear', ...parsed };
+      return { command: 'clear', force: parsed.force, ...parsed };
     case 'config':
       return { command: 'config', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
     case 'autosave':
@@ -1047,12 +1173,10 @@ async function main() {
         success = await deleteTodo(parsed.id);
         break;
       case 'clean':
-        console.log('🧹 Clean command (delete completed todos) - Coming soon!');
-        console.log('💡 Use "node index.js help clean" to see detailed documentation.');
+        success = await cleanCompletedTodos({ force: parsed.force });
         break;
       case 'clear':
-        console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
-        console.log('💡 Use "node index.js help clear" to see detailed documentation.');
+        success = await clearAllTodos({ force: parsed.force });
         break;
       case 'config':
         if (parsed.subcommand === 'show' || !parsed.subcommand) {

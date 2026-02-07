@@ -367,6 +367,22 @@ class TodoCoreEnhanced {
     }
 
     const todo = this.todos[todoIndex];
+
+    // Create Todo model instance if available for enhanced delete validation
+    if (Todo) {
+      try {
+        const todoInstance = new Todo(todo);
+        if (!todoInstance.canBeDeleted()) {
+          return {
+            success: false,
+            error: 'Todo cannot be deleted due to business rules'
+          };
+        }
+      } catch (error) {
+        this.log('warn', `Failed to validate delete for todo ${numId}: ${error.message}`);
+      }
+    }
+
     this.todos.splice(todoIndex, 1);
 
     const saveResult = await this.storage.saveData(this.todos);
@@ -389,6 +405,156 @@ class TodoCoreEnhanced {
         storage: { saved: false }
       };
     }
+  }
+
+  /**
+   * Bulk delete todos based on criteria
+   * @param {string} operation - The bulk delete operation (clean, clear, overdue, etc.)
+   * @param {Object} options - Additional options
+   * @returns {Object} Result with deleted todos count and details
+   */
+  async bulkDeleteTodos(operation, options = {}) {
+    await this.ensureInitialized();
+
+    const { dryRun = false, force = false } = options;
+
+    // Find todos to delete
+    let todosToDelete;
+    if (Todo) {
+      // Use enhanced Todo model filtering
+      todosToDelete = this.todos.filter(todoData => {
+        try {
+          const todoInstance = new Todo(todoData);
+          return todoInstance.shouldBeIncludedInBulkDelete(operation);
+        } catch (error) {
+          this.log('warn', `Failed to evaluate todo ${todoData.id} for bulk delete: ${error.message}`);
+          return false;
+        }
+      });
+    } else {
+      // Fallback to basic filtering
+      todosToDelete = this.todos.filter(todo => {
+        switch (operation.toLowerCase()) {
+          case 'clean':
+          case 'cleanup':
+          case 'completed':
+            return todo.completed;
+          case 'clear':
+          case 'purge':
+            return true;
+          case 'overdue':
+            return !todo.completed && todo.dueDate && new Date(todo.dueDate) < new Date();
+          case 'pending':
+            return !todo.completed;
+          default:
+            return false;
+        }
+      });
+    }
+
+    if (todosToDelete.length === 0) {
+      return {
+        success: true,
+        operation,
+        deleted: [],
+        count: 0,
+        message: `No todos found matching criteria for '${operation}' operation`
+      };
+    }
+
+    // If dry run, return what would be deleted
+    if (dryRun) {
+      return {
+        success: true,
+        operation,
+        dryRun: true,
+        toBeDeleted: todosToDelete,
+        count: todosToDelete.length,
+        message: `Would delete ${todosToDelete.length} todos with '${operation}' operation`
+      };
+    }
+
+    // Safety check for destructive operations
+    if (!force && (operation === 'clear' || operation === 'purge')) {
+      return {
+        success: false,
+        error: `Operation '${operation}' requires explicit force=true confirmation`,
+        operation,
+        wouldDelete: todosToDelete.length
+      };
+    }
+
+    // Perform bulk delete
+    const originalTodos = [...this.todos];
+    const deletedTodos = [];
+    const deletedIds = todosToDelete.map(t => t.id);
+
+    // Remove todos from the list
+    this.todos = this.todos.filter(todo => {
+      if (deletedIds.includes(todo.id)) {
+        deletedTodos.push(todo);
+        return false;
+      }
+      return true;
+    });
+
+    // Save changes
+    const saveResult = await this.storage.saveData(this.todos);
+    if (saveResult.success) {
+      this.log('info', `Bulk delete '${operation}': deleted ${deletedTodos.length} todos`);
+
+      return {
+        success: true,
+        operation,
+        deleted: deletedTodos,
+        count: deletedTodos.length,
+        remaining: this.todos.length,
+        storage: {
+          saved: true,
+          count: saveResult.metadata.count,
+          location: saveResult.metadata.location
+        },
+        message: `Successfully deleted ${deletedTodos.length} todos with '${operation}' operation`
+      };
+    } else {
+      // Revert changes since save failed
+      this.todos = originalTodos;
+      return {
+        success: false,
+        operation,
+        error: saveResult.error || 'Failed to save after bulk delete',
+        attempted: deletedTodos.length,
+        storage: { saved: false }
+      };
+    }
+  }
+
+  /**
+   * Clean completed todos (bulk delete completed items)
+   */
+  async cleanCompletedTodos(options = {}) {
+    return await this.bulkDeleteTodos('clean', options);
+  }
+
+  /**
+   * Clear all todos (bulk delete everything)
+   */
+  async clearAllTodos(options = {}) {
+    return await this.bulkDeleteTodos('clear', { ...options, force: options.force || false });
+  }
+
+  /**
+   * Delete overdue todos
+   */
+  async deleteOverdueTodos(options = {}) {
+    return await this.bulkDeleteTodos('overdue', options);
+  }
+
+  /**
+   * Get bulk delete preview (dry run)
+   */
+  async previewBulkDelete(operation) {
+    return await this.bulkDeleteTodos(operation, { dryRun: true });
   }
 
   /**
