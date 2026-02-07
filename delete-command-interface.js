@@ -1,9 +1,11 @@
 const { ConfirmationUtil } = require('./confirmation-util');
+const { DeleteCommandParser } = require('./delete-command-parser');
 
 /**
  * Delete Command Interface - Centralized interface for all delete operations
  *
  * This module provides a unified interface for delete commands with:
+ * - Enhanced command parsing and validation
  * - Consistent error handling and user feedback
  * - Improved command validation and suggestions
  * - Enhanced help system and guidance
@@ -12,6 +14,16 @@ const { ConfirmationUtil } = require('./confirmation-util');
 class DeleteCommandInterface {
   constructor(todoCore) {
     this.todoCore = todoCore;
+    this.parser = new DeleteCommandParser();
+
+    // Handler mapping based on command types
+    this.handlers = new Map([
+      ['single', this.handleSingleDelete.bind(this)],
+      ['batch', this.handleBatchDelete.bind(this)],
+      ['bulk', this.handleBulkOperation.bind(this)]
+    ]);
+
+    // Legacy command mapping for backward compatibility
     this.commands = new Map([
       ['delete', this.handleSingleDelete.bind(this)],
       ['del', this.handleSingleDelete.bind(this)],
@@ -36,23 +48,22 @@ class DeleteCommandInterface {
    */
   async executeCommand(command, args = [], options = {}) {
     try {
-      // Normalize command
-      const normalizedCommand = command.toLowerCase();
+      // Use the new parser for validation and parsing
+      const parseResult = this.parser.parseCommand(command, args, options);
 
-      // Check if command exists
-      if (!this.commands.has(normalizedCommand)) {
-        return this.handleUnknownCommand(command, args);
+      // Handle parsing errors
+      if (!parseResult.success) {
+        return this.handleParseError(parseResult);
       }
 
-      // Validate args before execution
-      const validation = this.validateCommand(normalizedCommand, args, options);
-      if (!validation.valid) {
-        return this.handleValidationError(normalizedCommand, validation, args, options);
+      // Get the appropriate handler based on command type
+      const handler = this.handlers.get(parseResult.parsed.type);
+      if (!handler) {
+        return this.createErrorResult(`No handler for command type: ${parseResult.parsed.type}`, command, args, options);
       }
 
-      // Execute the command
-      const handler = this.commands.get(normalizedCommand);
-      return await handler(args, options);
+      // Execute the command with parsed information
+      return await handler(parseResult.parsed, parseResult.options);
 
     } catch (error) {
       return this.handleError(error, command, args, options);
@@ -156,7 +167,52 @@ class DeleteCommandInterface {
   }
 
   /**
-   * Handle unknown commands with smart suggestions
+   * Handle parsing errors from the new parser
+   */
+  async handleParseError(parseResult) {
+    console.log(`❌ Error: ${parseResult.error}`);
+    console.log('');
+
+    const details = parseResult.details || {};
+
+    if (details.suggestion) {
+      console.log(`💡 ${details.suggestion}`);
+      console.log('');
+    }
+
+    if (details.hint) {
+      console.log(`ℹ️  ${details.hint}`);
+      console.log('');
+    }
+
+    if (details.suggestions && details.suggestions.length > 0) {
+      console.log('🤔 Did you mean:');
+      details.suggestions.forEach(suggestion => {
+        console.log(`  • ${suggestion.command} - ${suggestion.description}`);
+      });
+      console.log('');
+    }
+
+    if (details.examples && details.examples.length > 0) {
+      console.log('📝 EXAMPLES:');
+      details.examples.forEach(example => {
+        console.log(`  ${example}`);
+      });
+      console.log('');
+    }
+
+    // Show help for unknown commands
+    if (details.code === 'UNKNOWN_COMMAND') {
+      this.showQuickHelp();
+    } else {
+      console.log('Use "node index.js help delete" for detailed help.');
+    }
+
+    return { success: false, error: parseResult.error };
+  }
+
+  /**
+   * Handle unknown commands with smart suggestions (legacy method)
    */
   async handleUnknownCommand(command, args) {
     console.log(`❌ Unknown delete command: "${command}"`);
@@ -297,11 +353,56 @@ class DeleteCommandInterface {
   }
 
   /**
+   * Unified bulk operation handler (for new parser)
+   */
+  async handleBulkOperation(parsed, options) {
+    const operation = parsed.operation;
+    const force = options.force || false;
+
+    switch (operation) {
+      case 'clean':
+        return await this.handleClean([], { force });
+      case 'clear':
+        return await this.handleClear([], { force });
+      default:
+        return this.createErrorResult(`Unknown bulk operation: ${operation}`);
+    }
+  }
+
+  /**
+   * Create an error result object
+   */
+  createErrorResult(error, command = '', args = [], options = {}) {
+    return {
+      success: false,
+      error,
+      command,
+      args,
+      options,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
    * Enhanced single delete with better feedback
    */
-  async handleSingleDelete(args, options) {
-    const identifier = args[0];
-    const { useIndex = false, force = false } = options;
+  async handleSingleDelete(parsed, options) {
+    // Handle both new parser format and legacy args format
+    let identifier, useIndex, force;
+
+    if (parsed && typeof parsed === 'object' && parsed.type === 'single') {
+      // New parser format
+      identifier = parsed.identifier;
+      useIndex = parsed.useIndex;
+      force = options.force || false;
+    } else {
+      // Legacy args format for backward compatibility
+      const args = parsed; // In legacy mode, parsed is actually args
+      identifier = args[0];
+      const opts = options || {};
+      useIndex = opts.useIndex || false;
+      force = opts.force || false;
+    }
 
     console.log(`🗑️  DELETE ${useIndex ? 'BY POSITION' : 'BY ID'}`);
     console.log(`   Target: ${useIndex ? 'Position' : 'ID'} ${identifier}`);
@@ -396,9 +497,23 @@ class DeleteCommandInterface {
   /**
    * Enhanced batch delete with progress tracking
    */
-  async handleBatchDelete(args, options) {
-    const identifiers = args;
-    const { useIndex = false, force = false } = options;
+  async handleBatchDelete(parsed, options) {
+    // Handle both new parser format and legacy args format
+    let identifiers, useIndex, force;
+
+    if (parsed && typeof parsed === 'object' && parsed.type === 'batch') {
+      // New parser format
+      identifiers = parsed.identifiers;
+      useIndex = parsed.useIndex;
+      force = options.force || false;
+    } else {
+      // Legacy args format for backward compatibility
+      const args = parsed; // In legacy mode, parsed is actually args
+      identifiers = args;
+      const opts = options || {};
+      useIndex = opts.useIndex || false;
+      force = opts.force || false;
+    }
 
     console.log(`🗑️  BATCH DELETE BY ${useIndex ? 'POSITIONS' : 'IDS'}`);
     console.log(`   Targets: ${identifiers.join(', ')}`);
@@ -570,7 +685,7 @@ class DeleteCommandInterface {
     }
 
     // Execute clean
-    const result = await this.todoCore.bulkDeleteTodos('clean');
+    const result = await this.todoCore.bulkDeleteTodos('clean', { force: true });
 
     if (result.success) {
       console.log(`✅ Cleaned ${result.count} completed todos!`);
@@ -639,7 +754,7 @@ class DeleteCommandInterface {
     }
 
     // Execute clear
-    const result = await this.todoCore.bulkDeleteTodos('clear');
+    const result = await this.todoCore.bulkDeleteTodos('clear', { force: true });
 
     if (result.success) {
       console.log(`✅ Cleared all ${result.count} todos!`);

@@ -129,7 +129,12 @@ async function testBatchDelete() {
 
   // Test 1: Batch delete by IDs
   console.log('Test 1: Batch delete by IDs');
-  let result = await deleteInterface.executeCommand('batch-delete', ['1', '3'], { force: true });
+
+  // Get current todos to use valid IDs
+  const currentTodos = await todoCore.listTodos();
+  const validIds = currentTodos.slice(0, 2).map(todo => todo.id.toString()); // Get first 2 todo IDs
+
+  let result = await deleteInterface.executeCommand('batch-delete', validIds, { force: true });
   if (result.success && result.count === 2) {
     console.log('✅ PASS - Batch delete by IDs');
   } else {
@@ -194,8 +199,11 @@ async function testCleanAndClear() {
   }
 
   // Test 3: Clean when no completed todos exist
+  // Clear existing todos first
+  await deleteInterface.executeCommand('clear', [], { force: true });
+
+  // Create new todos and mark all as incomplete
   await createTestTodos();
-  // Mark all as incomplete
   const todos = await todoCore.listTodos();
   for (const todo of todos) {
     await todoCore.updateTodo(todo.id, { completed: false });
@@ -225,13 +233,22 @@ async function testCommandAliases() {
   let passCount = 0;
 
   for (const alias of aliases) {
-    const result = await deleteInterface.executeCommand(alias, ['1'], { force: true });
-    if (result.success) {
-      passCount++;
-      console.log(`✅ PASS - Alias "${alias}" works`);
+    // Get current todos to find a valid ID
+    const todos = await todoCore.listTodos();
+    const validId = todos.length > 0 ? todos[0].id.toString() : null;
+
+    if (validId) {
+      const result = await deleteInterface.executeCommand(alias, [validId], { force: true });
+      if (result.success) {
+        passCount++;
+        console.log(`✅ PASS - Alias "${alias}" works`);
+      } else {
+        console.log(`❌ FAIL - Alias "${alias}" failed`);
+      }
     } else {
-      console.log(`❌ FAIL - Alias "${alias}" failed`);
+      console.log(`❌ FAIL - Alias "${alias}" failed - no todos to delete`);
     }
+
     // Re-create a todo for next test
     await todoCore.addTodo(`Test todo for ${alias}`);
   }
@@ -277,7 +294,10 @@ async function testErrorHandling() {
     await todoCore.addTodo(`Todo ${i}`);
   }
 
-  const manyIds = Array.from({ length: 15 }, (_, i) => (i + 1).toString());
+  // Get actual IDs of the first 15 todos
+  const allTodos = await todoCore.listTodos();
+  const manyIds = allTodos.slice(0, 15).map(todo => todo.id.toString());
+
   result = await deleteInterface.executeCommand('batch-delete', manyIds, { force: true });
   if (result.success && result.count === 15) {
     console.log('✅ PASS - Large batch delete handled correctly');
