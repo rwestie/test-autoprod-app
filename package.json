@@ -1,9 +1,20 @@
 {
   "name": "test-todo-app",
   "version": "1.0.0",
+  "description": "A simple command-line todo list application with enhanced auto-save functionality",
+  "main": "index.js",
+  "bin": {
+    "todo": "./index.js"
+  },
   "scripts": {
-    "test": "node test.js && node test-autosave-integration.js",
+    "test": "node test.js && node test-autosave-integration.js && node test-storage-config.js",
     "test:core": "node test.js",
-    "test:autosave": "node test-autosave-integration.js"
-  }
+    "test:autosave": "node test-autosave-integration.js",
+    "test:storage": "node test-storage-config.js",
+    "deploy:preview": "npm test && echo '🚀 Storage location configuration feature ready for preview!'",
+    "start": "node index.js"
+  },
+  "keywords": ["todo", "cli", "productivity", "auto-save"],
+  "author": "Todo App Team",
+  "license": "MIT"
 }

@@ -3,21 +3,32 @@
 const { TodoCore } = require('./todo-core');
 const { AutoSaveIntegration } = require('./autosave-integration');
 const { AutoSaveConfig } = require('./autosave-config');
+const { StorageConfig } = require('./storage-config');
 
-// Create auto-save configuration based on environment
-let autoSaveConfig;
-if (process.env.NODE_ENV === 'development') {
-  autoSaveConfig = AutoSaveConfig.development();
-} else if (process.env.NODE_ENV === 'production') {
-  autoSaveConfig = AutoSaveConfig.production();
-} else {
-  // Try to load from environment, fallback to default
-  autoSaveConfig = AutoSaveConfig.fromEnvironment();
+// Global variables for configuration - will be initialized in main()
+let todoCore = null;
+let autoSaveTodoCore = null;
+
+// Initialize todo core with storage options
+function initializeTodoCore(storageOptions = {}) {
+  // Create storage configuration
+  const storageConfig = StorageConfig.fromEnvironment().merge(storageOptions);
+
+  // Create auto-save configuration based on environment
+  let autoSaveConfig;
+  if (process.env.NODE_ENV === 'development') {
+    autoSaveConfig = AutoSaveConfig.development();
+  } else if (process.env.NODE_ENV === 'production') {
+    autoSaveConfig = AutoSaveConfig.production();
+  } else {
+    // Try to load from environment, fallback to default
+    autoSaveConfig = AutoSaveConfig.fromEnvironment();
+  }
+
+  // Create a TodoCore instance with storage config and auto-save integration
+  todoCore = new TodoCore(storageConfig);
+  autoSaveTodoCore = new AutoSaveIntegration(todoCore, autoSaveConfig);
 }
-
-// Create a TodoCore instance with auto-save integration for the CLI
-const todoCore = new TodoCore();
-const autoSaveTodoCore = new AutoSaveIntegration(todoCore, autoSaveConfig);
 
 // Add a new todo
 function addTodo(description) {
@@ -199,6 +210,152 @@ function showCleanupHelp() {
   console.log('  node index.js help delete           - Help for single todo deletion');
 }
 
+// Show storage configuration
+function showStorageConfig() {
+  console.log('💾 STORAGE CONFIGURATION');
+  console.log('');
+
+  const config = todoCore.config;
+  const stats = todoCore.getStorageStats();
+
+  console.log('📁 CURRENT SETTINGS:');
+  console.log(`  Data directory: ${config.options.dataDir}`);
+  console.log(`  Data file: ${config.options.dataFile}`);
+  console.log(`  Full path: ${config.getDataFilePath()}`);
+  console.log(`  Backup file: ${config.getBackupFilePath()}`);
+  console.log(`  Temp file: ${config.getTempFilePath()}`);
+  console.log('');
+
+  console.log('📊 FILE STATUS:');
+  console.log(`  Data file exists: ${stats.fileExists ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Backup file exists: ${stats.backupExists ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Todo count: ${stats.todoCount}`);
+  if (stats.fileSize > 0) {
+    console.log(`  File size: ${stats.fileSize} bytes`);
+  }
+  if (stats.lastModified) {
+    console.log(`  Last modified: ${stats.lastModified}`);
+  }
+  console.log('');
+
+  console.log('⚙️  STORAGE OPTIONS:');
+  console.log(`  Backups enabled: ${config.options.enableBackups ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Backup retention: ${config.options.backupRetention}`);
+  console.log(`  Atomic writes: ${config.options.useTempFiles ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Validation enabled: ${config.options.enableValidation ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Migration enabled: ${config.options.enableMigration ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Max retries: ${config.options.maxRetries}`);
+  console.log(`  Retry delay: ${config.options.retryDelay}ms`);
+  console.log('');
+
+  console.log('🔧 CONFIGURATION OPTIONS:');
+  console.log('  Command line flags:');
+  console.log('    --data-dir <path>               - Set data directory');
+  console.log('    --data-file <filename>          - Set data filename');
+  console.log('');
+  console.log('  Environment variables:');
+  console.log('    TODO_DATA_DIR                   - Set data directory');
+  console.log('    TODO_DATA_FILE                  - Set data filename');
+  console.log('    TODO_ENABLE_BACKUPS             - Enable/disable backups (true/false)');
+  console.log('    TODO_BACKUP_RETENTION           - Number of backups to keep');
+  console.log('    TODO_LOG_LEVEL                  - Logging level (debug/info/warn/error)');
+  console.log('    TODO_MAX_RETRIES                - Maximum save retries');
+  console.log('');
+
+  console.log('💡 EXAMPLES:');
+  console.log('    node index.js --data-dir ~/.mytodos list');
+  console.log('    node index.js --data-file my-todos.json add "Task"');
+  console.log('    TODO_DATA_DIR=~/work/todos node index.js list');
+  console.log('    TODO_ENABLE_BACKUPS=false node index.js list');
+}
+
+// Set storage configuration
+function setStorageConfig(option, value) {
+  console.log('🔧 STORAGE CONFIGURATION');
+  console.log('');
+
+  if (!option || !value) {
+    console.error('❌ Error: Both option and value are required');
+    console.error('');
+    console.error('Usage: node index.js config set <option> <value>');
+    console.error('');
+    console.error('Available options:');
+    console.error('  data-dir          - Set data directory path');
+    console.error('  data-file         - Set data filename');
+    console.error('');
+    console.error('Examples:');
+    console.error('  node index.js config set data-dir ~/.mytodos');
+    console.error('  node index.js config set data-file my-todos.json');
+    return false;
+  }
+
+  console.log('⚠️  NOTE: Configuration changes only apply to the current session.');
+  console.log('   To make persistent changes, use environment variables or command line flags.');
+  console.log('');
+
+  switch (option.toLowerCase()) {
+    case 'data-dir':
+      console.log(`📁 Setting data directory to: ${value}`);
+      process.env.TODO_DATA_DIR = value;
+      console.log('✅ Data directory set for current session');
+      break;
+
+    case 'data-file':
+      console.log(`📄 Setting data filename to: ${value}`);
+      process.env.TODO_DATA_FILE = value;
+      console.log('✅ Data filename set for current session');
+      break;
+
+    default:
+      console.error(`❌ Error: Unknown configuration option "${option}"`);
+      console.error('Available options: data-dir, data-file');
+      return false;
+  }
+
+  console.log('');
+  console.log('💡 Restart the command or use a new command to see changes take effect.');
+  return true;
+}
+
+// Show configuration help
+function showConfigHelp() {
+  console.log('⚙️  CONFIGURATION COMMAND HELP');
+  console.log('');
+  console.log('Manage storage configuration for the todo application.');
+  console.log('');
+  console.log('📋 SYNTAX:');
+  console.log('  node index.js config <subcommand>');
+  console.log('');
+  console.log('📝 SUBCOMMANDS:');
+  console.log('  show                                - Show current storage configuration');
+  console.log('  set <option> <value>                - Set configuration option');
+  console.log('');
+  console.log('⚙️  CONFIGURABLE OPTIONS:');
+  console.log('  data-dir                            - Directory where todos are stored');
+  console.log('  data-file                           - Filename for the todo data');
+  console.log('');
+  console.log('✨ EXAMPLES:');
+  console.log('  node index.js config show          - Show current configuration');
+  console.log('  node index.js config set data-dir ~/.mytodos');
+  console.log('  node index.js config set data-file work-todos.json');
+  console.log('');
+  console.log('🔧 GLOBAL FLAGS:');
+  console.log('  --data-dir <path>                   - Override data directory');
+  console.log('  --data-file <name>                  - Override data filename');
+  console.log('');
+  console.log('🌍 ENVIRONMENT VARIABLES:');
+  console.log('  TODO_DATA_DIR                       - Set data directory');
+  console.log('  TODO_DATA_FILE                      - Set data filename');
+  console.log('  TODO_ENABLE_BACKUPS                 - Enable backups (true/false)');
+  console.log('  TODO_BACKUP_RETENTION               - Number of backups to keep');
+  console.log('');
+  console.log('💡 TIPS:');
+  console.log('  • Global flags override environment variables');
+  console.log('  • Environment variables persist across sessions');
+  console.log('  • Use absolute paths for data directories');
+  console.log('  • The default location is ~/.todos/todos.json');
+}
+
 // Show auto-save status and performance
 function showAutoSaveStatus() {
   console.log('💾 AUTO-SAVE STATUS');
@@ -263,7 +420,11 @@ function showUsage() {
   console.log('📝 Todo List Application');
   console.log('');
   console.log('USAGE:');
-  console.log('  node index.js <command> [arguments]');
+  console.log('  node index.js [global-options] <command> [arguments]');
+  console.log('');
+  console.log('GLOBAL OPTIONS:');
+  console.log('  --data-dir <path>                   - Override data directory');
+  console.log('  --data-file <name>                  - Override data filename');
   console.log('');
   console.log('COMMANDS:');
   console.log('  add "description"                   - Add a new todo');
@@ -272,6 +433,7 @@ function showUsage() {
   console.log('  delete <id>                         - Delete a todo');
   console.log('  clean                               - Delete all completed todos');
   console.log('  clear                               - Delete ALL todos');
+  console.log('  config <subcommand>                 - Manage storage configuration');
   console.log('  autosave                            - Show auto-save status and performance');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
@@ -282,8 +444,14 @@ function showUsage() {
   console.log('  node index.js delete 2              - Delete todo #2');
   console.log('  node index.js clean                 - Remove all completed todos');
   console.log('  node index.js clear                 - Remove ALL todos');
+  console.log('  node index.js config show           - Show storage configuration');
   console.log('  node index.js autosave              - Show auto-save status and stats');
   console.log('  node index.js help delete           - Get detailed help for delete command');
+  console.log('');
+  console.log('STORAGE CONFIGURATION:');
+  console.log('  node index.js --data-dir ~/.work config show');
+  console.log('  TODO_DATA_DIR=~/projects node index.js list');
+  console.log('  node index.js --data-file work.json add "Task"');
   console.log('');
   console.log('COMMAND ALIASES:');
   console.log('  ls, list                            - List todos');
@@ -309,6 +477,9 @@ function showCommandHelp(command) {
     case 'clear':
     case 'purge':
       showCleanupHelp();
+      break;
+    case 'config':
+      showConfigHelp();
       break;
     case 'add':
       console.log('➕ ADD COMMAND HELP');
@@ -354,53 +525,96 @@ function showCommandHelp(command) {
       console.log('  node index.js complete 1');
       console.log('  node index.js done 5');
       break;
+    case 'autosave':
+    case 'auto-save':
+    case 'status':
+      console.log('📊 AUTOSAVE COMMAND HELP');
+      console.log('');
+      console.log('Display auto-save status and performance statistics.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js autosave');
+      console.log('  node index.js auto-save');
+      console.log('  node index.js status');
+      console.log('');
+      console.log('📊 INFORMATION SHOWN:');
+      console.log('  • Auto-save configuration settings');
+      console.log('  • Storage health and file status');
+      console.log('  • Performance statistics and timing');
+      console.log('  • Configuration environment variables');
+      break;
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete, clean, clear');
+      console.log('Available commands: add, list, complete, delete, clean, clear, config, autosave');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
 
-// Parse command line arguments
+// Parse command line arguments with support for global storage options
 function parseArguments() {
   const args = process.argv.slice(2);
+  const parsed = {
+    storageOptions: {}
+  };
 
-  if (args.length === 0) {
-    return { command: 'list' };
+  // Extract global storage options first
+  const filteredArgs = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg === '--data-dir' && i + 1 < args.length) {
+      parsed.storageOptions.dataDir = args[i + 1];
+      i++; // Skip next argument as it's the value
+    } else if (arg === '--data-file' && i + 1 < args.length) {
+      parsed.storageOptions.dataFile = args[i + 1];
+      i++; // Skip next argument as it's the value
+    } else if (arg.startsWith('--data-dir=')) {
+      parsed.storageOptions.dataDir = arg.split('=', 2)[1];
+    } else if (arg.startsWith('--data-file=')) {
+      parsed.storageOptions.dataFile = arg.split('=', 2)[1];
+    } else {
+      filteredArgs.push(arg);
+    }
   }
 
-  const command = args[0].toLowerCase();
+  if (filteredArgs.length === 0) {
+    return { command: 'list', ...parsed };
+  }
+
+  const command = filteredArgs[0].toLowerCase();
 
   switch (command) {
     case 'add':
-      return { command: 'add', description: args.slice(1).join(' ') };
+      return { command: 'add', description: filteredArgs.slice(1).join(' '), ...parsed };
     case 'list':
     case 'ls':
-      return { command: 'list' };
+      return { command: 'list', ...parsed };
     case 'complete':
     case 'done':
-      return { command: 'complete', id: args[1] };
+      return { command: 'complete', id: filteredArgs[1], ...parsed };
     case 'delete':
     case 'remove':
     case 'rm':
-      return { command: 'delete', id: args[1] };
+      return { command: 'delete', id: filteredArgs[1], ...parsed };
     case 'clean':
     case 'cleanup':
-      return { command: 'clean' };
+      return { command: 'clean', ...parsed };
     case 'clear':
     case 'purge':
-      return { command: 'clear' };
+      return { command: 'clear', ...parsed };
+    case 'config':
+      return { command: 'config', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
     case 'autosave':
     case 'auto-save':
     case 'status':
-      return { command: 'autosave' };
+      return { command: 'autosave', ...parsed };
     case 'help':
     case '--help':
     case '-h':
-      return { command: 'help', subcommand: args[1] };
+      return { command: 'help', subcommand: filteredArgs[1], ...parsed };
     default:
-      return { command: 'unknown', original: command };
+      return { command: 'unknown', original: command, ...parsed };
   }
 }
 
@@ -455,6 +669,9 @@ function validateCommand(parsed) {
 function main() {
   const parsed = parseArguments();
 
+  // Initialize TodoCore with storage options from command line
+  initializeTodoCore(parsed.storageOptions || {});
+
   if (!validateCommand(parsed)) {
     process.exit(1);
   }
@@ -481,6 +698,22 @@ function main() {
     case 'clear':
       console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
       console.log('💡 Use "node index.js help clear" to see detailed documentation.');
+      break;
+    case 'config':
+      if (parsed.subcommand === 'show' || !parsed.subcommand) {
+        showStorageConfig();
+      } else if (parsed.subcommand === 'set' && parsed.args && parsed.args.length >= 2) {
+        success = setStorageConfig(parsed.args[0], parsed.args[1]);
+      } else if (parsed.subcommand === 'set') {
+        console.error('❌ Error: Set command requires option and value');
+        console.error('Usage: node index.js config set <option> <value>');
+        success = false;
+      } else {
+        console.error(`❌ Error: Unknown config subcommand "${parsed.subcommand}"`);
+        console.error('Available subcommands: show, set');
+        console.error('Use "node index.js help config" for detailed help');
+        success = false;
+      }
       break;
     case 'autosave':
       showAutoSaveStatus();
