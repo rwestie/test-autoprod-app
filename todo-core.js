@@ -36,12 +36,68 @@ class TodoCore {
 
     return data.filter(todo => {
       // Validate each todo has required fields
-      return todo &&
-             typeof todo.id === 'number' &&
-             typeof todo.description === 'string' &&
-             typeof todo.completed === 'boolean' &&
-             typeof todo.createdAt === 'string';
+      if (!todo ||
+          typeof todo.id !== 'number' ||
+          typeof todo.description !== 'string' ||
+          typeof todo.completed !== 'boolean' ||
+          typeof todo.createdAt !== 'string') {
+        return false;
+      }
+
+      // Validate priority if present
+      if (todo.priority !== undefined) {
+        const validPriorities = ['low', 'medium', 'high'];
+        if (!validPriorities.includes(todo.priority)) {
+          return false;
+        }
+      }
+
+      // Validate dueDate if present
+      if (todo.dueDate !== undefined) {
+        if (typeof todo.dueDate !== 'string' || isNaN(Date.parse(todo.dueDate))) {
+          return false;
+        }
+      }
+
+      // Validate tags if present
+      if (todo.tags !== undefined) {
+        if (!Array.isArray(todo.tags) || !todo.tags.every(tag => typeof tag === 'string')) {
+          return false;
+        }
+      }
+
+      // Validate completedAt if present
+      if (todo.completedAt !== undefined) {
+        if (typeof todo.completedAt !== 'string' || isNaN(Date.parse(todo.completedAt))) {
+          return false;
+        }
+      }
+
+      return true;
+    }).map(todo => {
+      // Migrate old todos to new structure
+      return this.migrateTodoStructure(todo);
     });
+  }
+
+  migrateTodoStructure(todo) {
+    // Ensure backward compatibility by adding default values for new fields
+    const migrated = { ...todo };
+
+    // Add priority if missing
+    if (migrated.priority === undefined) {
+      migrated.priority = 'medium';
+    }
+
+    // Add tags array if missing
+    if (migrated.tags === undefined) {
+      migrated.tags = [];
+    }
+
+    // Ensure description is trimmed
+    migrated.description = migrated.description.trim();
+
+    return migrated;
   }
 
   loadTodos() {
@@ -134,17 +190,41 @@ class TodoCore {
     return Math.max(...this.todos.map(todo => todo.id)) + 1;
   }
 
-  addTodo(description) {
+  addTodo(description, options = {}) {
     if (!description || description.trim().length === 0) {
       return { success: false, error: 'Description is required' };
+    }
+
+    // Validate options
+    const { priority = 'medium', dueDate, tags = [] } = options;
+
+    if (!['low', 'medium', 'high'].includes(priority)) {
+      return { success: false, error: 'Priority must be low, medium, or high' };
+    }
+
+    if (dueDate !== undefined) {
+      if (typeof dueDate !== 'string' || isNaN(Date.parse(dueDate))) {
+        return { success: false, error: 'Due date must be a valid ISO date string' };
+      }
+    }
+
+    if (!Array.isArray(tags) || !tags.every(tag => typeof tag === 'string')) {
+      return { success: false, error: 'Tags must be an array of strings' };
     }
 
     const todo = {
       id: this.nextId++,
       description: description.trim(),
       completed: false,
+      priority,
+      tags: tags.map(tag => tag.trim()).filter(tag => tag.length > 0),
       createdAt: new Date().toISOString()
     };
+
+    // Add due date if provided
+    if (dueDate !== undefined) {
+      todo.dueDate = dueDate;
+    }
 
     this.todos.push(todo);
 
@@ -207,6 +287,103 @@ class TodoCore {
       return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
     }
   }
+
+  updateTodo(id, updates) {
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    const todo = this.todos.find(t => t.id === numId);
+    if (!todo) {
+      return { success: false, error: `Todo with ID ${numId} not found` };
+    }
+
+    // Validate updates
+    if (updates.priority !== undefined && !['low', 'medium', 'high'].includes(updates.priority)) {
+      return { success: false, error: 'Priority must be low, medium, or high' };
+    }
+
+    if (updates.dueDate !== undefined) {
+      if (typeof updates.dueDate !== 'string' || isNaN(Date.parse(updates.dueDate))) {
+        return { success: false, error: 'Due date must be a valid ISO date string' };
+      }
+    }
+
+    if (updates.tags !== undefined) {
+      if (!Array.isArray(updates.tags) || !updates.tags.every(tag => typeof tag === 'string')) {
+        return { success: false, error: 'Tags must be an array of strings' };
+      }
+    }
+
+    // Apply updates
+    if (updates.description !== undefined) {
+      todo.description = updates.description.trim();
+    }
+    if (updates.priority !== undefined) {
+      todo.priority = updates.priority;
+    }
+    if (updates.dueDate !== undefined) {
+      todo.dueDate = updates.dueDate;
+    }
+    if (updates.tags !== undefined) {
+      todo.tags = updates.tags.map(tag => tag.trim()).filter(tag => tag.length > 0);
+    }
+
+    const saveResult = this.saveTodos();
+    if (saveResult.success) {
+      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
+    } else {
+      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
+    }
+  }
+
+  listTodosByPriority(priority) {
+    if (!['low', 'medium', 'high'].includes(priority)) {
+      return [];
+    }
+    return this.todos.filter(todo => todo.priority === priority);
+  }
+
+  listTodosByTag(tag) {
+    return this.todos.filter(todo => todo.tags.includes(tag));
+  }
+
+  getTodoById(id) {
+    const numId = parseInt(id);
+    if (isNaN(numId)) {
+      return null;
+    }
+    return this.todos.find(todo => todo.id === numId) || null;
+  }
+
+  getOverdueTodos() {
+    const now = new Date().toISOString();
+    return this.todos.filter(todo =>
+      !todo.completed &&
+      todo.dueDate &&
+      todo.dueDate < now
+    );
+  }
+
+  getDueTodosToday() {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+    return this.todos.filter(todo =>
+      !todo.completed &&
+      todo.dueDate &&
+      todo.dueDate.startsWith(todayStr)
+    );
+  }
+
+  getAllTags() {
+    const tagSet = new Set();
+    this.todos.forEach(todo => {
+      todo.tags.forEach(tag => tagSet.add(tag));
+    });
+    return Array.from(tagSet).sort();
+  }
 }
 
 // Singleton instance for functional API
@@ -220,9 +397,9 @@ function getGlobalTodoCore() {
 }
 
 // Functional API
-function add_todo(description) {
+function add_todo(description, options) {
   const core = getGlobalTodoCore();
-  return core.addTodo(description);
+  return core.addTodo(description, options);
 }
 
 function list_todos() {
@@ -240,6 +417,41 @@ function delete_todo(id) {
   return core.deleteTodo(id);
 }
 
+function update_todo(id, updates) {
+  const core = getGlobalTodoCore();
+  return core.updateTodo(id, updates);
+}
+
+function get_todo_by_id(id) {
+  const core = getGlobalTodoCore();
+  return core.getTodoById(id);
+}
+
+function list_todos_by_priority(priority) {
+  const core = getGlobalTodoCore();
+  return core.listTodosByPriority(priority);
+}
+
+function list_todos_by_tag(tag) {
+  const core = getGlobalTodoCore();
+  return core.listTodosByTag(tag);
+}
+
+function get_overdue_todos() {
+  const core = getGlobalTodoCore();
+  return core.getOverdueTodos();
+}
+
+function get_due_todos_today() {
+  const core = getGlobalTodoCore();
+  return core.getDueTodosToday();
+}
+
+function get_all_tags() {
+  const core = getGlobalTodoCore();
+  return core.getAllTags();
+}
+
 // Function to reset the global instance (useful for testing)
 function reset_global_core() {
   _globalTodoCore = null;
@@ -251,5 +463,12 @@ module.exports = {
   list_todos,
   complete_todo,
   delete_todo,
+  update_todo,
+  get_todo_by_id,
+  list_todos_by_priority,
+  list_todos_by_tag,
+  get_overdue_todos,
+  get_due_todos_today,
+  get_all_tags,
   reset_global_core
 };

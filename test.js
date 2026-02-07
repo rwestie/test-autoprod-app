@@ -202,7 +202,167 @@ try {
     assert(typeof addResult.error === 'string', "Should include error message");
   });
 
-  console.log("\n🎉 All storage tests passed!");
+  // Test 9: Enhanced data structure with priority, tags, and due dates
+  runTest("Enhanced data structure", () => {
+    const testFile = path.join(testDir, 'enhanced-test.json');
+    const todoCore = new TodoCore(testFile);
+
+    // Test adding todo with priority and tags
+    const result = todoCore.addTodo("Enhanced todo", {
+      priority: 'high',
+      tags: ['work', 'urgent'],
+      dueDate: '2024-12-31T23:59:59Z'
+    });
+
+    assert(result.success, "Should successfully add enhanced todo");
+    assert(result.todo.priority === 'high', "Priority should be set correctly");
+    assert(Array.isArray(result.todo.tags), "Tags should be an array");
+    assert(result.todo.tags.includes('work'), "Tags should include 'work'");
+    assert(result.todo.tags.includes('urgent'), "Tags should include 'urgent'");
+    assert(result.todo.dueDate === '2024-12-31T23:59:59Z', "Due date should be set correctly");
+
+    // Test default priority for todos without explicit priority
+    const simpleResult = todoCore.addTodo("Simple todo");
+    assert(simpleResult.success, "Should add simple todo");
+    assert(simpleResult.todo.priority === 'medium', "Should default to medium priority");
+    assert(Array.isArray(simpleResult.todo.tags), "Should have empty tags array");
+    assert(simpleResult.todo.tags.length === 0, "Default tags should be empty");
+  });
+
+  // Test 10: Data structure validation with enhanced fields
+  runTest("Enhanced data validation", () => {
+    const testFile = path.join(testDir, 'validation-enhanced-test.json');
+
+    // Create file with mixed valid and invalid data
+    const mixedData = [
+      {
+        id: 1,
+        description: "Valid enhanced todo",
+        completed: false,
+        priority: 'high',
+        tags: ['work'],
+        dueDate: '2024-12-31T23:59:59Z',
+        createdAt: "2024-01-01T00:00:00Z"
+      },
+      {
+        id: 2,
+        description: "Invalid priority todo",
+        completed: false,
+        priority: 'invalid_priority',
+        tags: ['test'],
+        createdAt: "2024-01-01T00:00:00Z"
+      },
+      {
+        id: 3,
+        description: "Invalid tags todo",
+        completed: false,
+        tags: 'not_an_array',
+        createdAt: "2024-01-01T00:00:00Z"
+      },
+      {
+        id: 4,
+        description: "Valid old format todo",
+        completed: true,
+        createdAt: "2024-01-01T00:00:00Z"
+      }
+    ];
+
+    fs.writeFileSync(testFile, JSON.stringify(mixedData));
+
+    const todoCore = new TodoCore(testFile);
+    const todos = todoCore.listTodos();
+
+    // Should have 2 valid todos (1 enhanced + 1 migrated old format)
+    assert(todos.length === 2, "Should filter invalid and migrate valid todos");
+
+    const enhancedTodo = todos.find(t => t.id === 1);
+    assert(enhancedTodo, "Enhanced todo should be preserved");
+    assert(enhancedTodo.priority === 'high', "Priority should be preserved");
+    assert(enhancedTodo.tags.includes('work'), "Tags should be preserved");
+
+    const migratedTodo = todos.find(t => t.id === 4);
+    assert(migratedTodo, "Old format todo should be migrated");
+    assert(migratedTodo.priority === 'medium', "Should have default priority");
+    assert(Array.isArray(migratedTodo.tags), "Should have tags array");
+  });
+
+  // Test 11: Update functionality
+  runTest("Update todo functionality", () => {
+    const testFile = path.join(testDir, 'update-test.json');
+    const todoCore = new TodoCore(testFile);
+
+    // Add initial todo
+    todoCore.addTodo("Todo to update", { priority: 'low', tags: ['test'] });
+
+    // Update priority and tags
+    const updateResult = todoCore.updateTodo(1, {
+      priority: 'high',
+      tags: ['urgent', 'work'],
+      description: 'Updated description'
+    });
+
+    assert(updateResult.success, "Should successfully update todo");
+    assert(updateResult.todo.priority === 'high', "Priority should be updated");
+    assert(updateResult.todo.description === 'Updated description', "Description should be updated");
+    assert(updateResult.todo.tags.includes('urgent'), "Should include new tag 'urgent'");
+    assert(updateResult.todo.tags.includes('work'), "Should include new tag 'work'");
+    assert(!updateResult.todo.tags.includes('test'), "Should not include old tag 'test'");
+  });
+
+  // Test 12: Query functionality
+  runTest("Query functionality", () => {
+    const testFile = path.join(testDir, 'query-test.json');
+    const todoCore = new TodoCore(testFile);
+
+    // Add test todos
+    todoCore.addTodo("High priority todo", { priority: 'high', tags: ['work'] });
+    todoCore.addTodo("Low priority todo", { priority: 'low', tags: ['personal'] });
+    todoCore.addTodo("Work todo", { priority: 'medium', tags: ['work', 'project'] });
+
+    // Test priority filtering
+    const highPriorityTodos = todoCore.listTodosByPriority('high');
+    assert(highPriorityTodos.length === 1, "Should find one high priority todo");
+    assert(highPriorityTodos[0].description === 'High priority todo', "Should find correct high priority todo");
+
+    // Test tag filtering
+    const workTodos = todoCore.listTodosByTag('work');
+    assert(workTodos.length === 2, "Should find two work todos");
+
+    // Test get by ID
+    const todo = todoCore.getTodoById(1);
+    assert(todo !== null, "Should find todo by ID");
+    assert(todo.description === 'High priority todo', "Should find correct todo by ID");
+
+    // Test all tags
+    const allTags = todoCore.getAllTags();
+    assert(allTags.includes('work'), "Should include 'work' tag");
+    assert(allTags.includes('personal'), "Should include 'personal' tag");
+    assert(allTags.includes('project'), "Should include 'project' tag");
+  });
+
+  // Test 13: Due date functionality
+  runTest("Due date functionality", () => {
+    const testFile = path.join(testDir, 'duedate-test.json');
+    const todoCore = new TodoCore(testFile);
+
+    // Use simple, fixed dates for testing
+    todoCore.addTodo("Overdue todo", { dueDate: '2024-01-01T10:00:00Z' });
+    todoCore.addTodo("Due today", { dueDate: '2026-02-07T23:59:59Z' }); // Today's date
+    todoCore.addTodo("Due future", { dueDate: '2026-12-31T10:00:00Z' });
+    todoCore.addTodo("No due date");
+
+    // Test overdue todos
+    const overdueTodos = todoCore.getOverdueTodos();
+    assert(overdueTodos.length === 1, "Should find one overdue todo");
+    assert(overdueTodos[0].description === 'Overdue todo', "Should find correct overdue todo");
+
+    // Test due today - this tests if the date matches today's date
+    const dueTodayTodos = todoCore.getDueTodosToday();
+    assert(dueTodayTodos.length === 1, "Should find one todo due today");
+    assert(dueTodayTodos[0].description === 'Due today', "Should find correct todo due today");
+  });
+
+  console.log("\n🎉 All storage and enhanced data structure tests passed!");
 
 } catch (error) {
   console.error("❌ Test failed:", error.message);
