@@ -2,6 +2,8 @@
   "name": "test-todo-app",
   "version": "1.0.0",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js && node test-autosave-integration.js",
+    "test:core": "node test.js",
+    "test:autosave": "node test-autosave-integration.js"
   }
 }

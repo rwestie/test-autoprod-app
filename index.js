@@ -1,13 +1,27 @@
 #!/usr/bin/env node
 
 const { TodoCore } = require('./todo-core');
+const { AutoSaveIntegration } = require('./autosave-integration');
+const { AutoSaveConfig } = require('./autosave-config');
 
-// Create a TodoCore instance for the CLI
+// Create auto-save configuration based on environment
+let autoSaveConfig;
+if (process.env.NODE_ENV === 'development') {
+  autoSaveConfig = AutoSaveConfig.development();
+} else if (process.env.NODE_ENV === 'production') {
+  autoSaveConfig = AutoSaveConfig.production();
+} else {
+  // Try to load from environment, fallback to default
+  autoSaveConfig = AutoSaveConfig.fromEnvironment();
+}
+
+// Create a TodoCore instance with auto-save integration for the CLI
 const todoCore = new TodoCore();
+const autoSaveTodoCore = new AutoSaveIntegration(todoCore, autoSaveConfig);
 
 // Add a new todo
 function addTodo(description) {
-  const result = todoCore.addTodo(description);
+  const result = autoSaveTodoCore.addTodo(description);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -18,15 +32,18 @@ function addTodo(description) {
   }
 
   console.log(`✅ Added todo #${result.todo.id}: ${result.todo.description}`);
-  if (result.storage && result.storage.saved) {
-    console.log(`📁 Saved to storage (${result.storage.count} total todos)`);
+
+  // Display auto-save messages
+  if (result.autoSaveMessages) {
+    result.autoSaveMessages.forEach(msg => console.log(msg));
   }
+
   return true;
 }
 
 // List all todos
 function listTodos() {
-  const todos = todoCore.listTodos();
+  const todos = autoSaveTodoCore.listTodos();
 
   if (todos.length === 0) {
     console.log('No todos found. Add one with: node index.js add "Your todo description"');
@@ -42,7 +59,7 @@ function listTodos() {
 
 // Mark todo as complete
 function completeTodo(id) {
-  const result = todoCore.completeTodo(id);
+  const result = autoSaveTodoCore.completeTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -56,8 +73,10 @@ function completeTodo(id) {
     console.log(`ℹ️  ${result.message}`);
   } else {
     console.log(`✅ Marked todo #${result.todo.id} as complete: ${result.todo.description}`);
-    if (result.storage && result.storage.saved) {
-      console.log(`📁 Changes saved to storage (${result.storage.count} total todos)`);
+
+    // Display auto-save messages
+    if (result.autoSaveMessages) {
+      result.autoSaveMessages.forEach(msg => console.log(msg));
     }
   }
   return true;
@@ -65,7 +84,7 @@ function completeTodo(id) {
 
 // Delete a todo
 function deleteTodo(id) {
-  const result = todoCore.deleteTodo(id);
+  const result = autoSaveTodoCore.deleteTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -80,13 +99,13 @@ function deleteTodo(id) {
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
 
-  // Show storage feedback
-  if (result.storage && result.storage.saved) {
-    console.log(`📁 Changes saved to storage (${result.storage.count} todos remaining)`);
+  // Display auto-save messages
+  if (result.autoSaveMessages) {
+    result.autoSaveMessages.forEach(msg => console.log(msg));
   }
 
   // Show count of remaining todos
-  const remaining = todoCore.listTodos();
+  const remaining = autoSaveTodoCore.listTodos();
   const remainingCount = remaining.length;
   const pendingCount = remaining.filter(t => !t.completed).length;
   const completedCount = remaining.filter(t => t.completed).length;
@@ -180,6 +199,65 @@ function showCleanupHelp() {
   console.log('  node index.js help delete           - Help for single todo deletion');
 }
 
+// Show auto-save status and performance
+function showAutoSaveStatus() {
+  console.log('💾 AUTO-SAVE STATUS');
+  console.log('');
+
+  const config = autoSaveTodoCore.getConfig();
+  const healthCheck = autoSaveTodoCore.performHealthCheck();
+
+  console.log('⚙️  CONFIGURATION:');
+  console.log(`  Auto-save enabled: ${config.isEnabled() ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Show progress: ${config.shouldShowProgress() ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Show timing: ${config.shouldShowTiming() ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Track performance: ${config.shouldTrackPerformance() ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Verbose logging: ${config.shouldShowVerbose() ? '✅ Yes' : '❌ No'}`);
+  console.log('');
+
+  if (healthCheck) {
+    console.log('🏥 STORAGE HEALTH:');
+    console.log(`  Status: ${healthCheck.storage.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
+    console.log(`  Todo count: ${healthCheck.storage.todoCount}`);
+    console.log(`  Data file exists: ${healthCheck.storage.fileExists ? '✅ Yes' : '❌ No'}`);
+    console.log(`  Backup exists: ${healthCheck.storage.backupExists ? '✅ Yes' : '❌ No'}`);
+    if (healthCheck.storage.fileSize !== undefined) {
+      console.log(`  File size: ${healthCheck.storage.fileSize} bytes`);
+    }
+    console.log('');
+
+    if (healthCheck.performance) {
+      const perf = healthCheck.performance;
+      console.log('📊 PERFORMANCE STATISTICS:');
+      console.log(`  Total operations: ${perf.totalOperations}`);
+      console.log(`  Successful saves: ${perf.successfulSaves}`);
+      console.log(`  Failed saves: ${perf.failedSaves}`);
+      console.log(`  Success rate: ${perf.successRate}%`);
+      if (perf.averageDuration) {
+        console.log(`  Average save time: ${perf.averageDuration}ms`);
+      }
+      if (perf.fastestSave !== null) {
+        console.log(`  Fastest save: ${perf.fastestSave}ms`);
+      }
+      if (perf.slowestSave !== null) {
+        console.log(`  Slowest save: ${perf.slowestSave}ms`);
+      }
+      if (perf.totalRetries > 0) {
+        console.log(`  Total retries used: ${perf.totalRetries}`);
+      }
+      console.log('');
+    }
+  }
+
+  console.log('🔧 CONFIGURATION OPTIONS:');
+  console.log('  Set TODO_AUTOSAVE_ENABLED=false to disable auto-save');
+  console.log('  Set TODO_AUTOSAVE_SHOW_PROGRESS=false to hide progress messages');
+  console.log('  Set TODO_AUTOSAVE_SHOW_TIMING=true to show save timing');
+  console.log('  Set TODO_AUTOSAVE_VERBOSE=true for detailed logging');
+  console.log('  Set NODE_ENV=development for verbose auto-save mode');
+  console.log('  Set NODE_ENV=production for minimal auto-save messages');
+}
+
 // Show usage information
 function showUsage() {
   console.log('📝 Todo List Application');
@@ -194,6 +272,7 @@ function showUsage() {
   console.log('  delete <id>                         - Delete a todo');
   console.log('  clean                               - Delete all completed todos');
   console.log('  clear                               - Delete ALL todos');
+  console.log('  autosave                            - Show auto-save status and performance');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
@@ -203,6 +282,7 @@ function showUsage() {
   console.log('  node index.js delete 2              - Delete todo #2');
   console.log('  node index.js clean                 - Remove all completed todos');
   console.log('  node index.js clear                 - Remove ALL todos');
+  console.log('  node index.js autosave              - Show auto-save status and stats');
   console.log('  node index.js help delete           - Get detailed help for delete command');
   console.log('');
   console.log('COMMAND ALIASES:');
@@ -311,6 +391,10 @@ function parseArguments() {
     case 'clear':
     case 'purge':
       return { command: 'clear' };
+    case 'autosave':
+    case 'auto-save':
+    case 'status':
+      return { command: 'autosave' };
     case 'help':
     case '--help':
     case '-h':
@@ -397,6 +481,9 @@ function main() {
     case 'clear':
       console.log('🗑️  Clear command (delete ALL todos) - Coming soon!');
       console.log('💡 Use "node index.js help clear" to see detailed documentation.');
+      break;
+    case 'autosave':
+      showAutoSaveStatus();
       break;
     case 'help':
       if (parsed.subcommand) {
