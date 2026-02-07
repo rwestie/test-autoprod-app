@@ -185,6 +185,43 @@ class TodoCore {
       return { success: false, error: 'Failed to save changes - deletion rolled back' };
     }
   }
+
+  // Bulk delete completed todos
+  bulkDeleteCompleted() {
+    // Get completed todos before deletion for reporting
+    const completedTodos = this.todos.filter(todo => todo.completed);
+
+    if (completedTodos.length === 0) {
+      return {
+        success: true,
+        deletedCount: 0,
+        message: 'No completed todos to delete'
+      };
+    }
+
+    // Create backup for rollback in case save fails
+    const todosBackup = [...this.todos];
+
+    // Remove completed todos
+    this.todos = this.todos.filter(todo => !todo.completed);
+
+    // Try to save the changes
+    if (this.saveTodos()) {
+      return {
+        success: true,
+        deletedCount: completedTodos.length,
+        deletedTodos: completedTodos,
+        message: `Successfully deleted ${completedTodos.length} completed todo${completedTodos.length === 1 ? '' : 's'}`
+      };
+    } else {
+      // Restore the todos if save failed (rollback)
+      this.todos = todosBackup;
+      return {
+        success: false,
+        error: 'Failed to save changes - bulk deletion rolled back'
+      };
+    }
+  }
 }
 
 // Functional API
@@ -213,11 +250,17 @@ function delete_todo_by_index(index) {
   return core.deleteTodoByIndex(index);
 }
 
+function bulk_delete_completed() {
+  const core = new TodoCore();
+  return core.bulkDeleteCompleted();
+}
+
 module.exports = {
   TodoCore,
   add_todo,
   list_todos,
   complete_todo,
   delete_todo,
-  delete_todo_by_index
+  delete_todo_by_index,
+  bulk_delete_completed
 };
