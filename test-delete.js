@@ -249,6 +249,173 @@ function testSaveFailureRecovery() {
   console.log("    ✅ Save failure recovery test passed");
 }
 
+// Test 11: Bulk delete completed todos with mixed todos
+function testBulkDeleteCompleted() {
+  console.log("  Testing bulk delete completed todos...");
+  const core = createTestTodoCore();
+
+  // Add some todos
+  core.addTodo("First todo");
+  core.addTodo("Second todo");
+  core.addTodo("Third todo");
+  core.addTodo("Fourth todo");
+
+  // Mark some as completed
+  core.completeTodo(1);
+  core.completeTodo(3);
+
+  const beforeCount = core.listTodos().length;
+  const completedCount = core.listTodos().filter(t => t.completed).length;
+  const pendingCount = core.listTodos().filter(t => !t.completed).length;
+
+  const result = core.bulkDeleteCompleted();
+
+  assert(result.success === true, "Bulk delete should succeed");
+  assert(result.deletedCount === completedCount, "Should report correct deleted count");
+  assert(result.deletedTodos.length === completedCount, "Should return deleted todos");
+  assert(core.listTodos().length === pendingCount, "Should only have pending todos remaining");
+  assert(core.listTodos().every(t => !t.completed), "All remaining todos should be pending");
+
+  core.cleanup();
+  console.log("    ✅ Bulk delete completed todos test passed");
+}
+
+// Test 12: Bulk delete with no completed todos
+function testBulkDeleteNoCompleted() {
+  console.log("  Testing bulk delete with no completed todos...");
+  const core = createTestTodoCore();
+
+  // Add some todos but don't complete any
+  core.addTodo("First todo");
+  core.addTodo("Second todo");
+  core.addTodo("Third todo");
+
+  const beforeCount = core.listTodos().length;
+  const result = core.bulkDeleteCompleted();
+
+  assert(result.success === true, "Bulk delete should succeed even with no completed todos");
+  assert(result.deletedCount === 0, "Should report zero deleted count");
+  assert(result.message === "No completed todos to delete", "Should provide appropriate message");
+  assert(core.listTodos().length === beforeCount, "Should have same number of todos");
+
+  core.cleanup();
+  console.log("    ✅ Bulk delete with no completed todos test passed");
+}
+
+// Test 13: Bulk delete with empty list
+function testBulkDeleteEmptyList() {
+  console.log("  Testing bulk delete with empty list...");
+  const core = createTestTodoCore();
+
+  const result = core.bulkDeleteCompleted();
+
+  assert(result.success === true, "Bulk delete should succeed with empty list");
+  assert(result.deletedCount === 0, "Should report zero deleted count");
+  assert(result.message === "No completed todos to delete", "Should provide appropriate message");
+
+  core.cleanup();
+  console.log("    ✅ Bulk delete with empty list test passed");
+}
+
+// Test 14: Bulk delete with all todos completed
+function testBulkDeleteAllCompleted() {
+  console.log("  Testing bulk delete with all todos completed...");
+  const core = createTestTodoCore();
+
+  // Add and complete all todos
+  core.addTodo("First todo");
+  core.addTodo("Second todo");
+  core.addTodo("Third todo");
+
+  core.completeTodo(1);
+  core.completeTodo(2);
+  core.completeTodo(3);
+
+  const beforeCount = core.listTodos().length;
+  const result = core.bulkDeleteCompleted();
+
+  assert(result.success === true, "Bulk delete should succeed");
+  assert(result.deletedCount === beforeCount, "Should delete all todos");
+  assert(core.listTodos().length === 0, "Should have no todos remaining");
+
+  core.cleanup();
+  console.log("    ✅ Bulk delete with all todos completed test passed");
+}
+
+// Test 15: Bulk delete save failure recovery
+function testBulkDeleteSaveFailure() {
+  console.log("  Testing bulk delete save failure recovery...");
+  const core = createTestTodoCore();
+
+  // Add and complete some todos
+  core.addTodo("First todo");
+  core.addTodo("Second todo");
+  core.addTodo("Third todo");
+
+  core.completeTodo(1);
+  core.completeTodo(3);
+
+  const originalTodos = [...core.listTodos()];
+
+  // Mock save failure
+  const originalSaveTodos = core.saveTodos;
+  core.saveTodos = () => false;
+
+  const result = core.bulkDeleteCompleted();
+
+  assert(result.success === false, "Bulk delete should fail when save fails");
+  assert(result.error === "Failed to save changes - bulk deletion rolled back", "Should provide rollback message");
+
+  // Verify rollback - todos should be unchanged
+  const currentTodos = core.listTodos();
+  assert(currentTodos.length === originalTodos.length, "Todo count should be unchanged after rollback");
+
+  // Restore original save method
+  core.saveTodos = originalSaveTodos;
+
+  core.cleanup();
+  console.log("    ✅ Bulk delete save failure recovery test passed");
+}
+
+// Test 16: Bulk delete data persistence
+function testBulkDeletePersistence() {
+  console.log("  Testing bulk delete data persistence...");
+  const testFile = path.join(__dirname, `test-bulk-persistence-${Date.now()}.json`);
+
+  // Create core, add todos, complete some, bulk delete
+  let core = new TodoCore(testFile);
+  core.addTodo("First todo");
+  core.addTodo("Second todo");
+  core.addTodo("Third todo");
+  core.addTodo("Fourth todo");
+
+  core.completeTodo(1);
+  core.completeTodo(3);
+
+  const beforePendingCount = core.listTodos().filter(t => !t.completed).length;
+  const deleteResult = core.bulkDeleteCompleted();
+
+  assert(deleteResult.success === true, "Bulk delete should succeed");
+
+  // Create new core instance to test persistence
+  core = new TodoCore(testFile);
+  const afterTodos = core.listTodos();
+
+  assert(afterTodos.length === beforePendingCount, "Only pending todos should remain after persistence");
+  assert(afterTodos.every(t => !t.completed), "All persisted todos should be pending");
+
+  // Cleanup
+  try {
+    if (fs.existsSync(testFile)) {
+      fs.unlinkSync(testFile);
+    }
+  } catch (error) {
+    console.warn(`Failed to cleanup test file: ${error.message}`);
+  }
+
+  console.log("    ✅ Bulk delete data persistence test passed");
+}
+
 // Run all tests
 function runDeleteTests() {
   try {
@@ -262,6 +429,14 @@ function runDeleteTests() {
     testDeleteOutOfBounds();
     testDataPersistence();
     testSaveFailureRecovery();
+
+    // Bulk delete tests
+    testBulkDeleteCompleted();
+    testBulkDeleteNoCompleted();
+    testBulkDeleteEmptyList();
+    testBulkDeleteAllCompleted();
+    testBulkDeleteSaveFailure();
+    testBulkDeletePersistence();
 
     console.log("✅ All delete functionality tests passed!");
     return true;

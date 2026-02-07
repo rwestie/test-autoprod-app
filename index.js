@@ -19,18 +19,24 @@ function addTodo(description) {
 }
 
 // List all todos
-function listTodos() {
-  const todos = todoCore.listTodos();
+function listTodos(showArchived = false) {
+  const options = showArchived ? { archivedOnly: true } : { includeArchived: false };
+  const todos = todoCore.listTodos(options);
 
   if (todos.length === 0) {
-    console.log('No todos found. Add one with: node index.js add "Your todo description"');
+    const message = showArchived
+      ? 'No archived todos found.'
+      : 'No todos found. Add one with: node index.js add "Your todo description"';
+    console.log(message);
     return;
   }
 
-  console.log('Your todos:');
+  const title = showArchived ? 'Archived todos:' : 'Your todos:';
+  console.log(title);
   todos.forEach(todo => {
     const status = todo.completed ? '✓' : ' ';
-    console.log(`  [${status}] #${todo.id}: ${todo.description}`);
+    const archivedMarker = todo.archived ? ' 📦' : '';
+    console.log(`  [${status}] #${todo.id}: ${todo.description}${archivedMarker}`);
   });
 }
 
@@ -80,16 +86,113 @@ function deleteTodo(id) {
   return true;
 }
 
+// Archive a todo
+function archiveTodo(id) {
+  const result = todoCore.archiveTodo(id);
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  if (result.message) {
+    console.log(result.message);
+  } else {
+    const status = result.todo.completed ? '✓' : ' ';
+    console.log(`📦 Successfully archived todo #${result.todo.id}: ${result.todo.description}`);
+    console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
+  }
+
+  // Show count of remaining active todos
+  const remaining = todoCore.listTodos({ includeArchived: false });
+  const remainingCount = remaining.length;
+  const pendingCount = remaining.filter(t => !t.completed).length;
+  const completedCount = remaining.filter(t => t.completed).length;
+
+  if (remainingCount === 0) {
+    console.log('📝 No active todos remaining. Add one with: node index.js add "Your todo description"');
+  } else {
+    console.log(`📊 Active todos: ${remainingCount} total (${pendingCount} pending, ${completedCount} completed)`);
+  }
+
+  return true;
+}
+
+// Unarchive a todo
+function unarchiveTodo(id) {
+  const result = todoCore.unarchiveTodo(id);
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    console.error('💡 Use "node index.js list-archived" to see archived todos');
+    return false;
+  }
+
+  if (result.message) {
+    console.log(result.message);
+  } else {
+    const status = result.todo.completed ? '✓' : ' ';
+    console.log(`📤 Successfully unarchived todo #${result.todo.id}: ${result.todo.description}`);
+    console.log(`   Status: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
+  }
+
+  return true;
+}
+
+// Bulk delete completed todos
+function bulkDeleteCompleted() {
+  const result = todoCore.bulkDeleteCompleted();
+
+  if (!result.success) {
+    console.error(`❌ Error: ${result.error}`);
+    return false;
+  }
+
+  if (result.deletedCount === 0) {
+    console.log('✨ No completed todos to delete');
+    console.log('💡 Use "node index.js list" to see your current todos');
+    return true;
+  }
+
+  console.log(`🧹 ${result.message}`);
+
+  // Show details of deleted todos
+  if (result.deletedTodos && result.deletedTodos.length > 0) {
+    console.log('\nDeleted todos:');
+    result.deletedTodos.forEach(todo => {
+      console.log(`  [✓] #${todo.id}: ${todo.description}`);
+    });
+  }
+
+  // Show count of remaining todos
+  const remaining = todoCore.listTodos();
+  const remainingCount = remaining.length;
+  const pendingCount = remaining.filter(t => !t.completed).length;
+  const completedCount = remaining.filter(t => t.completed).length;
+
+  console.log('');
+  if (remainingCount === 0) {
+    console.log('📝 No todos remaining. Add one with: node index.js add "Your todo description"');
+  } else {
+    console.log(`📊 Remaining todos: ${remainingCount} total (${pendingCount} pending, ${completedCount} completed)`);
+  }
+
+  return true;
+}
+
 // Show detailed help for delete command
 function showDeleteHelp() {
   console.log('🗑️  DELETE COMMAND HELP');
   console.log('');
-  console.log('Delete a todo item permanently from your list.');
+  console.log('Delete todo items permanently from your list.');
   console.log('');
   console.log('📋 SYNTAX:');
   console.log('  node index.js delete <id>           - Delete todo by ID');
   console.log('  node index.js remove <id>           - Same as delete');
   console.log('  node index.js rm <id>               - Same as delete');
+  console.log('  node index.js clean                 - Delete all completed todos');
+  console.log('  node index.js clear-completed       - Same as clean');
   console.log('');
   console.log('📝 PARAMETERS:');
   console.log('  <id>                                - The ID number of the todo to delete');
@@ -99,11 +202,14 @@ function showDeleteHelp() {
   console.log('  node index.js delete 5              - Delete todo with ID 5');
   console.log('  node index.js remove 2              - Delete todo with ID 2 (alias)');
   console.log('  node index.js rm 10                 - Delete todo with ID 10 (alias)');
+  console.log('  node index.js clean                 - Delete all completed todos at once');
+  console.log('  node index.js clear-completed       - Same as clean');
   console.log('');
   console.log('💡 TIPS:');
   console.log('  • Use "node index.js list" to see all todos and their IDs');
   console.log('  • Deleting a todo is permanent - it cannot be undone');
-  console.log('  • You can delete both completed and pending todos');
+  console.log('  • You can delete both completed and pending todos individually');
+  console.log('  • Use "clean" to quickly remove all completed todos');
   console.log('  • The app will show you what was deleted and remaining count');
   console.log('');
   console.log('❌ COMMON ERRORS:');
@@ -125,22 +231,33 @@ function showUsage() {
   console.log('');
   console.log('COMMANDS:');
   console.log('  add "description"                   - Add a new todo');
-  console.log('  list                                - List all todos');
+  console.log('  list                                - List active todos');
+  console.log('  list-archived                       - List archived todos');
   console.log('  complete <id>                       - Mark todo as complete');
-  console.log('  delete <id>                         - Delete a todo');
+  console.log('  archive <id>                        - Archive a todo');
+  console.log('  unarchive <id>                      - Restore archived todo');
+  console.log('  delete <id>                         - Delete a todo permanently');
+  console.log('  clean                               - Delete all completed todos');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
   console.log('  node index.js add "Buy groceries"   - Add a new todo');
-  console.log('  node index.js list                  - Show all todos');
+  console.log('  node index.js list                  - Show active todos');
+  console.log('  node index.js list-archived         - Show archived todos');
   console.log('  node index.js complete 1            - Mark todo #1 as done');
-  console.log('  node index.js delete 2              - Delete todo #2');
-  console.log('  node index.js help delete           - Get detailed help for delete command');
+  console.log('  node index.js archive 2             - Archive todo #2');
+  console.log('  node index.js unarchive 3           - Restore archived todo #3');
+  console.log('  node index.js delete 4              - Delete todo #4 permanently');
+  console.log('  node index.js clean                 - Delete all completed todos');
+  console.log('  node index.js help archive          - Get detailed help for archive command');
   console.log('');
   console.log('COMMAND ALIASES:');
-  console.log('  ls, list                            - List todos');
+  console.log('  ls, list                            - List active todos');
+  console.log('  ls-archived, list-archived          - List archived todos');
   console.log('  done, complete                      - Mark complete');
-  console.log('  rm, remove, delete                  - Delete todos');
+  console.log('  restore, unarchive                  - Restore archived todos');
+  console.log('  rm, remove, delete                  - Delete todos permanently');
+  console.log('  clean, clear-completed              - Delete all completed todos');
   console.log('  -h, --help, help                    - Show help');
   console.log('');
   console.log('💡 TIP: Run "node index.js help <command>" for detailed help on any command.');
@@ -153,6 +270,32 @@ function showCommandHelp(command) {
     case 'remove':
     case 'rm':
       showDeleteHelp();
+      break;
+    case 'clean':
+    case 'clear-completed':
+      console.log('🧹 CLEAN COMMAND HELP');
+      console.log('');
+      console.log('Delete all completed todos at once.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js clean');
+      console.log('  node index.js clear-completed');
+      console.log('');
+      console.log('📝 BEHAVIOR:');
+      console.log('  • Removes all todos marked as completed (✓)');
+      console.log('  • Leaves pending todos unchanged');
+      console.log('  • Shows summary of deleted todos');
+      console.log('  • Reports remaining todo counts');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js clean                 - Delete all completed todos');
+      console.log('  node index.js clear-completed       - Same as clean');
+      console.log('');
+      console.log('💡 TIPS:');
+      console.log('  • Use this after completing many todos to clean up your list');
+      console.log('  • The operation is permanent and cannot be undone');
+      console.log('  • If no completed todos exist, no action is taken');
+      console.log('  • Use "list" first to see which todos are completed');
       break;
     case 'add':
       console.log('➕ ADD COMMAND HELP');
@@ -198,10 +341,75 @@ function showCommandHelp(command) {
       console.log('  node index.js complete 1');
       console.log('  node index.js done 5');
       break;
+    case 'archive':
+      console.log('📦 ARCHIVE COMMAND HELP');
+      console.log('');
+      console.log('Archive a todo item instead of deleting it permanently.');
+      console.log('Archived todos are hidden from the main list but can be restored later.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js archive <id>');
+      console.log('');
+      console.log('📝 PARAMETERS:');
+      console.log('  <id>                              - The ID number of the todo to archive');
+      console.log('                                      Must be a valid number (1, 2, 3, etc.)');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js archive 5           - Archive todo with ID 5');
+      console.log('');
+      console.log('💡 TIPS:');
+      console.log('  • Use "node index.js list" to see active todos and their IDs');
+      console.log('  • Archived todos can be restored with "unarchive" command');
+      console.log('  • Use "node index.js list-archived" to see archived todos');
+      console.log('  • Archive is safer than delete - you can undo it');
+      console.log('  • Both completed and pending todos can be archived');
+      break;
+    case 'unarchive':
+    case 'restore':
+      console.log('📤 UNARCHIVE COMMAND HELP');
+      console.log('');
+      console.log('Restore an archived todo back to your active todo list.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js unarchive <id>');
+      console.log('  node index.js restore <id>');
+      console.log('');
+      console.log('📝 PARAMETERS:');
+      console.log('  <id>                              - The ID number of the archived todo');
+      console.log('                                      Must be a valid number (1, 2, 3, etc.)');
+      console.log('');
+      console.log('✨ EXAMPLES:');
+      console.log('  node index.js unarchive 3         - Restore archived todo with ID 3');
+      console.log('  node index.js restore 7           - Same as unarchive (alias)');
+      console.log('');
+      console.log('💡 TIPS:');
+      console.log('  • Use "node index.js list-archived" to see archived todos and their IDs');
+      console.log('  • Restored todos return to the active list with their original status');
+      console.log('  • You can re-archive a todo if needed');
+      break;
+    case 'list-archived':
+    case 'ls-archived':
+      console.log('📦 LIST-ARCHIVED COMMAND HELP');
+      console.log('');
+      console.log('Display all archived todos.');
+      console.log('');
+      console.log('📋 SYNTAX:');
+      console.log('  node index.js list-archived');
+      console.log('  node index.js ls-archived');
+      console.log('');
+      console.log('✨ OUTPUT FORMAT:');
+      console.log('  [✓] #1: Completed archived todo 📦');
+      console.log('  [ ] #2: Pending archived todo 📦');
+      console.log('');
+      console.log('💡 TIPS:');
+      console.log('  • Archived todos are marked with 📦 symbol');
+      console.log('  • Use "unarchive <id>" to restore any archived todo');
+      console.log('  • Regular "list" command only shows active todos');
+      break;
     default:
       console.log(`❌ Unknown command: "${command}"`);
       console.log('');
-      console.log('Available commands: add, list, complete, delete');
+      console.log('Available commands: add, list, list-archived, complete, archive, unarchive, delete, clean');
       console.log('Use "node index.js help" to see all commands.');
   }
 }
@@ -222,6 +430,9 @@ function parseArguments() {
     case 'list':
     case 'ls':
       return { command: 'list' };
+    case 'list-archived':
+    case 'ls-archived':
+      return { command: 'list-archived' };
     case 'complete':
     case 'done':
       return { command: 'complete', id: args[1] };
@@ -229,6 +440,14 @@ function parseArguments() {
     case 'remove':
     case 'rm':
       return { command: 'delete', id: args[1] };
+    case 'clean':
+    case 'clear-completed':
+      return { command: 'clean' };
+    case 'archive':
+      return { command: 'archive', id: args[1] };
+    case 'unarchive':
+    case 'restore':
+      return { command: 'unarchive', id: args[1] };
     case 'help':
     case '--help':
     case '-h':
@@ -276,6 +495,36 @@ function validateCommand(parsed) {
       }
       break;
 
+    case 'archive':
+      if (!parsed.id) {
+        console.error('❌ Error: Archive command requires a todo ID');
+        console.error('📋 Usage: node index.js archive <id>');
+        console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
+        return false;
+      }
+      if (isNaN(parseInt(parsed.id))) {
+        console.error('❌ Error: Todo ID must be a valid number');
+        console.error(`📋 You provided: "${parsed.id}" - this should be a number like 1, 2, 3, etc.`);
+        console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
+        return false;
+      }
+      break;
+
+    case 'unarchive':
+      if (!parsed.id) {
+        console.error('❌ Error: Unarchive command requires a todo ID');
+        console.error('📋 Usage: node index.js unarchive <id>');
+        console.error('💡 Tip: Use "node index.js list-archived" to see archived todo IDs');
+        return false;
+      }
+      if (isNaN(parseInt(parsed.id))) {
+        console.error('❌ Error: Todo ID must be a valid number');
+        console.error(`📋 You provided: "${parsed.id}" - this should be a number like 1, 2, 3, etc.`);
+        console.error('💡 Tip: Use "node index.js list-archived" to see archived todo IDs');
+        return false;
+      }
+      break;
+
     case 'unknown':
       console.error(`Error: Unknown command "${parsed.original}"`);
       console.error('Run "node index.js help" to see available commands');
@@ -302,11 +551,23 @@ function main() {
     case 'list':
       listTodos();
       break;
+    case 'list-archived':
+      listTodos(true);
+      break;
     case 'complete':
       success = completeTodo(parsed.id);
       break;
     case 'delete':
       success = deleteTodo(parsed.id);
+      break;
+    case 'clean':
+      success = bulkDeleteCompleted();
+      break;
+    case 'archive':
+      success = archiveTodo(parsed.id);
+      break;
+    case 'unarchive':
+      success = unarchiveTodo(parsed.id);
       break;
     case 'help':
       if (parsed.subcommand) {
