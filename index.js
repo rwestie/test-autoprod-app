@@ -54,10 +54,33 @@ async function listTodos() {
   }
 
   console.log('Your todos:');
-  todos.forEach(todo => {
-    const status = todo.completed ? '✓' : ' ';
-    console.log(`  [${status}] #${todo.id}: ${todo.description}`);
-  });
+
+  // Group todos by completion status for better visual organization
+  const pendingTodos = todos.filter(todo => !todo.completed);
+  const completedTodos = todos.filter(todo => todo.completed);
+
+  // Display pending todos first
+  if (pendingTodos.length > 0) {
+    console.log('  📋 Pending:');
+    pendingTodos.forEach(todo => {
+      console.log(`    [ ] #${todo.id}: ${todo.description}`);
+    });
+  }
+
+  // Display completed todos with visual separation
+  if (completedTodos.length > 0) {
+    if (pendingTodos.length > 0) {
+      console.log(''); // Add spacing between sections
+    }
+    console.log('  ✅ Completed:');
+    completedTodos.forEach(todo => {
+      console.log(`    [✓] #${todo.id}: ${todo.description}`);
+    });
+  }
+
+  // Show summary counts
+  console.log('');
+  console.log(`📊 Summary: ${todos.length} total (${pendingTodos.length} pending, ${completedTodos.length} completed)`);
 }
 
 // Mark todo as complete
