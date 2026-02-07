@@ -3,9 +3,11 @@
 const { TodoCoreEnhanced } = require('./todo-core-enhanced');
 const { StorageConfig } = require('./storage-config');
 const { ConfirmationUtil } = require('./confirmation-util');
+const { DeleteCommandInterface } = require('./delete-command-interface');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
+let deleteInterface = null;
 
 // Initialize todo core with storage options
 async function initializeTodoCore(storageOptions = {}) {
@@ -17,6 +19,9 @@ async function initializeTodoCore(storageOptions = {}) {
 
   // Ensure initialization is complete
   await todoCore.initialize();
+
+  // Initialize delete command interface
+  deleteInterface = new DeleteCommandInterface(todoCore);
 }
 
 // Add a new todo
@@ -2025,53 +2030,29 @@ function validateCommand(parsed) {
 
     case 'delete':
       if (!parsed.identifier) {
-        const usage = parsed.useIndex ? 'node index.js delete <position> --index' : 'node index.js delete <id>';
-        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions (1-based indexing)' : 'Use "node index.js list" to see available todo IDs';
         console.error(`❌ Error: Delete command requires a ${parsed.useIndex ? 'position' : 'todo ID'}`);
-        console.error(`📋 Usage: ${usage}`);
-        console.error(`💡 Tip: ${tip}`);
+        console.error('💡 Use "node index.js help delete" for detailed guidance.');
         return false;
       }
       if (isNaN(parseInt(parsed.identifier))) {
-        const type = parsed.useIndex ? 'position' : 'Todo ID';
-        const example = parsed.useIndex ? 'position like 1, 2, 3' : 'number like 1, 2, 3';
-        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions' : 'Use "node index.js list" to see available todo IDs';
-        console.error(`❌ Error: ${type} must be a valid number`);
-        console.error(`📋 You provided: "${parsed.identifier}" - this should be a ${example}, etc.`);
-        console.error(`💡 Tip: ${tip}`);
+        console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: "${parsed.identifier}"`);
+        console.error(`💡 Use positive numbers only. Get help: node index.js help delete`);
         return false;
       }
       break;
 
     case 'batch-delete':
       if (!parsed.identifiers || parsed.identifiers.length === 0) {
-        const usage = parsed.useIndex ? 'node index.js batch-delete <pos1> <pos2> ... --index' : 'node index.js batch-delete <id1> <id2> ...';
-        const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions (1-based indexing)' : 'Use "node index.js list" to see available todo IDs';
-        console.error(`❌ Error: Batch delete command requires at least one ${parsed.useIndex ? 'position' : 'todo ID'}`);
-        console.error(`📋 Usage: ${usage}`);
-        console.error(`💡 Tip: ${tip}`);
-        console.error('');
-        console.error('✨ Examples:');
-        if (parsed.useIndex) {
-          console.error('  node index.js batch-delete 1 2 3 --index    - Delete first, second, and third todos');
-          console.error('  node index.js batch-rm 5 1 --index          - Delete fifth and first todos');
-        } else {
-          console.error('  node index.js batch-delete 5 7 12           - Delete todos with IDs 5, 7, and 12');
-          console.error('  node index.js batch-rm 3 8                  - Delete todos with IDs 3 and 8');
-        }
+        console.error(`❌ Error: Batch delete requires at least one ${parsed.useIndex ? 'position' : 'todo ID'}`);
+        console.error('💡 Use "node index.js help batch-delete" for detailed guidance.');
         return false;
       }
       // Check if identifiers are valid numbers
-      for (const identifier of parsed.identifiers) {
-        if (isNaN(parseInt(identifier))) {
-          const type = parsed.useIndex ? 'position' : 'Todo ID';
-          const example = parsed.useIndex ? 'positions like 1, 2, 3' : 'numbers like 1, 2, 3';
-          const tip = parsed.useIndex ? 'Use "node index.js list" to see todo positions' : 'Use "node index.js list" to see available todo IDs';
-          console.error(`❌ Error: All ${type}s must be valid numbers`);
-          console.error(`📋 You provided: "${identifier}" - this should be a ${example}, etc.`);
-          console.error(`💡 Tip: ${tip}`);
-          return false;
-        }
+      const invalidIds = parsed.identifiers.filter(id => isNaN(parseInt(id)));
+      if (invalidIds.length > 0) {
+        console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: ${invalidIds.join(', ')}`);
+        console.error(`💡 Use positive numbers only. Get help: node index.js help batch-delete`);
+        return false;
       }
       break;
 
@@ -2112,16 +2093,20 @@ async function main() {
         success = await uncompleteTodo(parsed.id);
         break;
       case 'delete':
-        success = await deleteTodo(parsed.identifier, { useIndex: parsed.useIndex, force: parsed.force });
+        const deleteResult = await deleteInterface.executeCommand('delete', [parsed.identifier], { useIndex: parsed.useIndex, force: parsed.force });
+        success = deleteResult.success;
         break;
       case 'batch-delete':
-        success = await batchDeleteTodos(parsed.identifiers, { useIndex: parsed.useIndex, force: parsed.force });
+        const batchResult = await deleteInterface.executeCommand('batch-delete', parsed.identifiers, { useIndex: parsed.useIndex, force: parsed.force });
+        success = batchResult.success;
         break;
       case 'clean':
-        success = await cleanCompletedTodos({ force: parsed.force });
+        const cleanResult = await deleteInterface.executeCommand('clean', [], { force: parsed.force });
+        success = cleanResult.success;
         break;
       case 'clear':
-        success = await clearAllTodos({ force: parsed.force });
+        const clearResult = await deleteInterface.executeCommand('clear', [], { force: parsed.force });
+        success = clearResult.success;
         break;
       case 'config':
         if (parsed.subcommand === 'show' || !parsed.subcommand) {
