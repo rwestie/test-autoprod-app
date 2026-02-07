@@ -53,28 +53,39 @@ class TodoCore {
 
         // If validation filtered out items, save the cleaned data
         if (validated.length !== parsed.length) {
-          console.warn(`Filtered out ${parsed.length - validated.length} invalid todo items`);
+          console.warn(`📋 Cleaned up ${parsed.length - validated.length} invalid todo items from storage`);
           this.todos = validated;
-          this.saveTodos();
+          const saveResult = this.saveTodos();
+          if (!saveResult.success) {
+            console.error(`❌ Failed to save cleaned data: ${saveResult.error}`);
+          }
+        }
+
+        if (validated.length > 0) {
+          console.log(`📂 Loaded ${validated.length} todo${validated.length === 1 ? '' : 's'} from ${this.dataFile}`);
         }
 
         return validated;
+      } else {
+        console.log(`📝 Creating new todo list at ${this.dataFile}`);
       }
     } catch (error) {
-      console.error('Error loading todos:', error.message);
+      console.error(`❌ Error loading todos from ${this.dataFile}:`, error.message);
 
       // Try to load from backup
       if (fs.existsSync(this.backupFile)) {
-        console.log('Attempting to restore from backup...');
+        console.log('🔄 Attempting to restore from backup...');
         try {
           const backupData = fs.readFileSync(this.backupFile, 'utf8');
           const parsed = JSON.parse(backupData);
           const validated = this.validateTodoData(parsed);
-          console.log('Successfully restored from backup');
+          console.log(`✅ Successfully restored ${validated.length} todo${validated.length === 1 ? '' : 's'} from backup`);
           return validated;
         } catch (backupError) {
-          console.error('Backup restoration failed:', backupError.message);
+          console.error(`❌ Backup restoration failed: ${backupError.message}`);
         }
+      } else {
+        console.log('⚠️  No backup file found, starting with empty todo list');
       }
     }
     return [];
@@ -85,6 +96,7 @@ class TodoCore {
       // Create backup of current file before saving
       if (fs.existsSync(this.dataFile)) {
         fs.copyFileSync(this.dataFile, this.backupFile);
+        console.log(`💾 Created backup before saving changes`);
       }
 
       // Atomic write: write to temp file first, then rename
@@ -98,20 +110,22 @@ class TodoCore {
       // Atomic move to final location
       fs.renameSync(this.tempFile, this.dataFile);
 
-      return true;
+      console.log(`✅ Successfully saved ${this.todos.length} todo${this.todos.length === 1 ? '' : 's'} to storage`);
+      return { success: true, count: this.todos.length, location: this.dataFile };
     } catch (error) {
-      console.error('Error saving todos:', error.message);
+      console.error(`❌ Error saving todos to ${this.dataFile}:`, error.message);
 
       // Clean up temp file if it exists
       if (fs.existsSync(this.tempFile)) {
         try {
           fs.unlinkSync(this.tempFile);
+          console.log('🧹 Cleaned up temporary file after save failure');
         } catch (cleanupError) {
-          console.error('Error cleaning up temp file:', cleanupError.message);
+          console.error('❌ Error cleaning up temp file:', cleanupError.message);
         }
       }
 
-      return false;
+      return { success: false, error: error.message };
     }
   }
 
@@ -134,10 +148,11 @@ class TodoCore {
 
     this.todos.push(todo);
 
-    if (this.saveTodos()) {
-      return { success: true, todo };
+    const saveResult = this.saveTodos();
+    if (saveResult.success) {
+      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
     } else {
-      return { success: false, error: 'Failed to save todo' };
+      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
     }
   }
 
@@ -163,10 +178,11 @@ class TodoCore {
     todo.completed = true;
     todo.completedAt = new Date().toISOString();
 
-    if (this.saveTodos()) {
-      return { success: true, todo };
+    const saveResult = this.saveTodos();
+    if (saveResult.success) {
+      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
     } else {
-      return { success: false, error: 'Failed to save todo' };
+      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
     }
   }
 
@@ -184,10 +200,11 @@ class TodoCore {
     const todo = this.todos[todoIndex];
     this.todos.splice(todoIndex, 1);
 
-    if (this.saveTodos()) {
-      return { success: true, todo };
+    const saveResult = this.saveTodos();
+    if (saveResult.success) {
+      return { success: true, todo, storage: { saved: true, count: saveResult.count, location: saveResult.location } };
     } else {
-      return { success: false, error: 'Failed to save todo' };
+      return { success: false, error: saveResult.error || 'Failed to save todo', storage: { saved: false } };
     }
   }
 }

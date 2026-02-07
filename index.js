@@ -10,11 +10,17 @@ function addTodo(description) {
   const result = todoCore.addTodo(description);
 
   if (!result.success) {
-    console.error(`Error: ${result.error}`);
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
     return false;
   }
 
-  console.log(`Added todo #${result.todo.id}: ${result.todo.description}`);
+  console.log(`✅ Added todo #${result.todo.id}: ${result.todo.description}`);
+  if (result.storage && result.storage.saved) {
+    console.log(`📁 Saved to storage (${result.storage.count} total todos)`);
+  }
   return true;
 }
 
@@ -39,14 +45,20 @@ function completeTodo(id) {
   const result = todoCore.completeTodo(id);
 
   if (!result.success) {
-    console.error(`Error: ${result.error}`);
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
     return false;
   }
 
   if (result.message) {
-    console.log(result.message);
+    console.log(`ℹ️  ${result.message}`);
   } else {
-    console.log(`Marked todo #${result.todo.id} as complete: ${result.todo.description}`);
+    console.log(`✅ Marked todo #${result.todo.id} as complete: ${result.todo.description}`);
+    if (result.storage && result.storage.saved) {
+      console.log(`📁 Changes saved to storage (${result.storage.count} total todos)`);
+    }
   }
   return true;
 }
@@ -58,12 +70,20 @@ function deleteTodo(id) {
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
     console.error('💡 Use "node index.js list" to see available todos');
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
     return false;
   }
 
   const status = result.todo.completed ? '✓' : ' ';
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
+
+  // Show storage feedback
+  if (result.storage && result.storage.saved) {
+    console.log(`📁 Changes saved to storage (${result.storage.count} todos remaining)`);
+  }
 
   // Show count of remaining todos
   const remaining = todoCore.listTodos();

@@ -161,6 +161,47 @@ try {
     assert(!todos.some(t => t.id === 1), "Todo 1 should be deleted");
   });
 
+  // Test 7: Storage operation feedback
+  runTest("Storage operation feedback", () => {
+    const testFile = path.join(testDir, 'feedback-test.json');
+    const todoCore = new TodoCore(testFile);
+
+    // Test adding todo with storage feedback
+    const addResult = todoCore.addTodo("Test feedback");
+    assert(addResult.success, "Should successfully add todo");
+    assert(addResult.storage, "Should include storage information");
+    assert(addResult.storage.saved === true, "Should confirm save success");
+    assert(addResult.storage.count === 1, "Should report correct count");
+    assert(addResult.storage.location === testFile, "Should report storage location");
+
+    // Test completing todo with storage feedback
+    const completeResult = todoCore.completeTodo(1);
+    assert(completeResult.success, "Should successfully complete todo");
+    assert(completeResult.storage, "Should include storage information");
+    assert(completeResult.storage.saved === true, "Should confirm save success");
+    assert(completeResult.storage.count === 1, "Should report correct count");
+
+    // Test deleting todo with storage feedback
+    const deleteResult = todoCore.deleteTodo(1);
+    assert(deleteResult.success, "Should successfully delete todo");
+    assert(deleteResult.storage, "Should include storage information");
+    assert(deleteResult.storage.saved === true, "Should confirm save success");
+    assert(deleteResult.storage.count === 0, "Should report correct count after deletion");
+  });
+
+  // Test 8: Storage feedback with save failures
+  runTest("Storage feedback with failures", () => {
+    const invalidPath = "/root/nonexistent/feedback-fail-test.json";
+    const todoCore = new TodoCore(invalidPath);
+
+    // Test adding todo with storage failure
+    const addResult = todoCore.addTodo("Test failure");
+    assert(!addResult.success, "Should fail to add todo with invalid path");
+    assert(addResult.storage, "Should include storage information");
+    assert(addResult.storage.saved === false, "Should confirm save failure");
+    assert(typeof addResult.error === 'string', "Should include error message");
+  });
+
   console.log("\n🎉 All storage tests passed!");
 
 } catch (error) {
