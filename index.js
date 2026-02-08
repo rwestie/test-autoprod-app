@@ -8,12 +8,18 @@ const { AutoSaveIntegration } = require('./autosave-integration');
 const { AutoSaveConfig } = require('./autosave-config');
 const { StateIntegration } = require('./state-integration');
 const { StorageErrorHandler } = require('./storage-error-handler');
+const { EnhancedStorageMigrationManager } = require('./enhanced-storage-migration-manager');
+const { BackupScheduler } = require('./backup-scheduler');
+const { DataIntegrityVerifier } = require('./data-integrity-verifier');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
 let deleteInterface = null;
 let autoSaveIntegration = null;
 let stateIntegration = null;
+let enhancedMigrationManager = null;
+let backupScheduler = null;
+let dataIntegrityVerifier = null;
 
 // Initialize todo core with storage options
 async function initializeTodoCore(storageOptions = {}) {
@@ -45,6 +51,17 @@ async function initializeTodoCore(storageOptions = {}) {
 
     // Initialize delete command interface
     deleteInterface = new DeleteCommandInterface(todoCore);
+
+    // Initialize enhanced storage migration manager
+    const migrationManager = todoCore.migrationManager;
+    const recoveryManager = todoCore.recoveryManager;
+    enhancedMigrationManager = new EnhancedStorageMigrationManager(storageConfig, migrationManager, recoveryManager);
+
+    // Initialize backup scheduler
+    backupScheduler = new BackupScheduler(storageConfig, recoveryManager);
+
+    // Initialize data integrity verifier
+    dataIntegrityVerifier = new DataIntegrityVerifier(storageConfig);
   } catch (error) {
     console.error('🚨 Failed to initialize todo application');
     throw error;
@@ -1321,6 +1338,9 @@ function showUsage() {
   console.log('  backup <subcommand>                 - Create, list, or restore backups');
   console.log('  export <format> [filename]          - Export todos (json/csv/txt)');
   console.log('  import <filepath> [--replace]       - Import todos from file');
+  console.log('  migrate-format <source> <target>    - Migrate data to different format');
+  console.log('  backup-schedule <name> <cron>       - Schedule automated backups');
+  console.log('  verify-integrity                    - Verify data integrity and detect corruption');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
@@ -1341,6 +1361,9 @@ function showUsage() {
   console.log('  node index.js backup list           - List available backups');
   console.log('  node index.js export csv            - Export todos to CSV');
   console.log('  node index.js import todos.csv      - Import todos from CSV');
+  console.log('  node index.js migrate-format json csv - Migrate data from JSON to CSV');
+  console.log('  node index.js backup-schedule daily "0 2 * * *" - Schedule daily backups');
+  console.log('  node index.js verify-integrity      - Check data integrity');
   console.log('  node index.js help delete           - Get detailed help for delete command');
   console.log('');
   console.log('STORAGE CONFIGURATION:');
@@ -1758,6 +1781,29 @@ function parseArguments() {
         replaceExisting,
         ...parsed
       };
+    case 'migrate-format':
+      return {
+        command: 'migrate-format',
+        sourceFormat: filteredArgs[1],
+        targetFormat: filteredArgs[2],
+        args: filteredArgs.slice(3),
+        ...parsed
+      };
+    case 'backup-schedule':
+      return {
+        command: 'backup-schedule',
+        subcommand: filteredArgs[1],
+        scheduleName: filteredArgs[1],
+        cronExpression: filteredArgs[2],
+        args: filteredArgs.slice(3),
+        ...parsed
+      };
+    case 'verify-integrity':
+      return {
+        command: 'verify-integrity',
+        args: filteredArgs.slice(1),
+        ...parsed
+      };
     case 'undo':
       // Parse undo subcommands: undo, undo <id>, undo list [count], undo stats, undo clear
       const undoSubcommand = filteredArgs[1];
@@ -1984,6 +2030,29 @@ async function main() {
           success = await importTodos(parsed.filePath, importOptions);
         }
         break;
+      case 'migrate-format':
+        if (!parsed.sourceFormat || !parsed.targetFormat) {
+          console.error('❌ Error: Source and target formats are required');
+          console.error('Usage: node index.js migrate-format <source> <target>');
+          console.error('Supported formats: json, csv, txt, xml');
+          success = false;
+        } else {
+          success = await performFormatMigration(parsed.sourceFormat, parsed.targetFormat);
+        }
+        break;
+      case 'backup-schedule':
+        if (!parsed.scheduleName || !parsed.cronExpression) {
+          console.error('❌ Error: Schedule name and cron expression are required');
+          console.error('Usage: node index.js backup-schedule <name> <cron>');
+          console.error('Example: node index.js backup-schedule daily "0 2 * * *"');
+          success = false;
+        } else {
+          success = await manageBackupSchedule(parsed.scheduleName, parsed.cronExpression, parsed.args);
+        }
+        break;
+      case 'verify-integrity':
+        success = await verifyDataIntegrity(parsed.args);
+        break;
       case 'undo':
         switch (parsed.subcommand) {
           case 'last':
@@ -2044,6 +2113,200 @@ async function main() {
     console.error('  • Run: node index.js help config');
 
     process.exit(1);
+  }
+}
+
+// Enhanced storage migration function
+async function performFormatMigration(sourceFormat, targetFormat) {
+  try {
+    console.log(`🔄 MIGRATING DATA FORMAT: ${sourceFormat.toUpperCase()} → ${targetFormat.toUpperCase()}`);
+    console.log('');
+
+    const todos = await todoCore.listTodos();
+
+    if (todos.length === 0) {
+      console.log('⚠️  No todos found to migrate');
+      return true;
+    }
+
+    const result = await enhancedMigrationManager.migrateToFormat(
+      todos,
+      sourceFormat,
+      targetFormat,
+      { includeMetadata: true }
+    );
+
+    if (result.success) {
+      console.log('✅ FORMAT MIGRATION COMPLETED');
+      console.log('');
+      console.log('📊 MIGRATION DETAILS:');
+      console.log(`  Source format: ${result.sourceFormat}`);
+      console.log(`  Target format: ${result.targetFormat}`);
+      console.log(`  Output file: ${result.outputPath}`);
+      console.log(`  Todo count: ${result.migrationStats.todoCount}`);
+      console.log(`  Compression ratio: ${(result.migrationStats.compressionRatio * 100).toFixed(1)}%`);
+      console.log('');
+      console.log('🔒 INTEGRITY VERIFICATION:');
+      console.log(`  Source checksum: ${result.sourceChecksum.substring(0, 16)}...`);
+      console.log(`  Target checksum: ${result.targetChecksum.substring(0, 16)}...`);
+      console.log(`  Integrity verified: ${result.integrityVerified ? '✅ Passed' : '❌ Failed'}`);
+      console.log('');
+      console.log('💾 BACKUP CREATED:');
+      console.log(`  Backup location: ${result.backupPath}`);
+
+      return true;
+    } else {
+      console.error('❌ FORMAT MIGRATION FAILED');
+      console.error(`Error: ${result.error}`);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('❌ Format migration failed:', error.message);
+    return false;
+  }
+}
+
+// Backup scheduling management function
+async function manageBackupSchedule(scheduleName, cronExpression, args) {
+  try {
+    console.log(`📅 MANAGING BACKUP SCHEDULE: ${scheduleName}`);
+    console.log('');
+
+    // Start scheduler if not running
+    if (!backupScheduler.getStatus().isRunning) {
+      backupScheduler.start();
+    }
+
+    const result = await backupScheduler.scheduleBackup(scheduleName, cronExpression, {
+      timezone: 'America/New_York',
+      enabled: true
+    });
+
+    if (result.success) {
+      console.log('✅ BACKUP SCHEDULE CREATED');
+      console.log('');
+      console.log('📋 SCHEDULE DETAILS:');
+      console.log(`  Schedule name: ${result.scheduleName}`);
+      console.log(`  Cron expression: ${result.cronExpression}`);
+      console.log(`  Next run: ${result.nextRun || 'Calculating...'}`);
+      console.log('');
+
+      // Set default retention policy
+      const retentionResult = backupScheduler.setRetentionPolicy(scheduleName, {
+        keepCount: 7,
+        keepDays: 30
+      });
+
+      if (retentionResult.success) {
+        console.log('📦 RETENTION POLICY:');
+        console.log('  Keep last 7 backups');
+        console.log('  Keep backups for 30 days');
+        console.log('');
+      }
+
+      console.log('💡 MANAGEMENT COMMANDS:');
+      console.log(`  View schedule: node index.js backup-schedule status`);
+      console.log(`  Stop schedule: node index.js backup-schedule stop ${scheduleName}`);
+      console.log(`  List schedules: node index.js backup-schedule list`);
+
+      return true;
+    } else {
+      console.error('❌ BACKUP SCHEDULE CREATION FAILED');
+      console.error(`Error: ${result.error}`);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('❌ Backup schedule management failed:', error.message);
+    return false;
+  }
+}
+
+// Data integrity verification function
+async function verifyDataIntegrity(args) {
+  try {
+    console.log('🔍 VERIFYING DATA INTEGRITY');
+    console.log('');
+
+    const todos = await todoCore.listTodos();
+
+    if (todos.length === 0) {
+      console.log('⚠️  No todos found to verify');
+      return true;
+    }
+
+    console.log(`📊 Starting verification of ${todos.length} todos...`);
+    console.log('');
+
+    const result = await dataIntegrityVerifier.verifyDataIntegrity(todos, {
+      performRepair: args.includes('--repair'),
+      detailed: args.includes('--detailed')
+    });
+
+    if (result.success) {
+      const verification = result.verification;
+
+      console.log('📋 VERIFICATION RESULTS');
+      console.log('');
+      console.log(`🎯 OVERALL SCORE: ${verification.overall.score}/100 (Grade: ${verification.overall.grade})`);
+      console.log(`Status: ${verification.overall.passed ? '✅ Passed' : '❌ Failed'}`);
+      console.log('');
+
+      console.log('🔍 DETAILED CHECKS:');
+      for (const [checkName, checkResult] of Object.entries(verification.checks)) {
+        const status = checkResult.passed ? '✅' : '❌';
+        console.log(`  ${checkName}: ${status} ${checkResult.score}/100`);
+
+        if (checkResult.issues && checkResult.issues.length > 0) {
+          console.log(`    Issues found: ${checkResult.issues.length}`);
+        }
+      }
+
+      console.log('');
+      console.log('📈 STATISTICS:');
+      console.log(`  Total issues: ${verification.statistics.totalIssues}`);
+      console.log(`  Critical issues: ${verification.statistics.issuesBySeverity.critical}`);
+      console.log(`  High priority issues: ${verification.statistics.issuesBySeverity.high}`);
+      console.log(`  Medium priority issues: ${verification.statistics.issuesBySeverity.medium}`);
+      console.log(`  Low priority issues: ${verification.statistics.issuesBySeverity.low}`);
+
+      if (verification.recommendations.length > 0) {
+        console.log('');
+        console.log('💡 RECOMMENDATIONS:');
+        for (const rec of verification.recommendations) {
+          const priority = rec.priority === 'critical' ? '🚨' :
+                          rec.priority === 'high' ? '⚠️' :
+                          rec.priority === 'medium' ? '📋' : '💭';
+          console.log(`  ${priority} ${rec.action}: ${rec.description}`);
+        }
+      }
+
+      // Store verification checksum
+      if (verification.checks.checksum && verification.checks.checksum.details.currentChecksum) {
+        await dataIntegrityVerifier.storeChecksum(verification.checks.checksum.details.currentChecksum);
+      }
+
+      console.log('');
+      console.log(`⏱️  Verification completed in ${verification.duration}ms`);
+
+      if (result.repairNeeded) {
+        console.log('');
+        console.log('🔧 DATA REPAIR RECOMMENDED');
+        console.log('Run with --repair flag to attempt automatic repair');
+        console.log('Example: node index.js verify-integrity --repair');
+      }
+
+      return verification.overall.passed;
+    } else {
+      console.error('❌ DATA INTEGRITY VERIFICATION FAILED');
+      console.error(`Error: ${result.error}`);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('❌ Data integrity verification failed:', error.message);
+    return false;
   }
 }
 
