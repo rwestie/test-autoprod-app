@@ -3,8 +3,11 @@ const fs = require('fs');
 class TodoCore {
   constructor(dataFile = './todos.json') {
     this.dataFile = dataFile;
+    this.undoHistoryFile = dataFile.replace('.json', '.undo.json');
     this.todos = this.loadTodos();
     this.nextId = this.getNextId();
+    this.undoHistory = this.loadUndoHistory(); // History of delete operations for undo functionality
+    this.maxUndoHistory = 10; // Maximum number of operations to keep in history
   }
 
   loadTodos() {
@@ -29,9 +32,111 @@ class TodoCore {
     }
   }
 
+  loadUndoHistory() {
+    try {
+      if (fs.existsSync(this.undoHistoryFile)) {
+        const data = fs.readFileSync(this.undoHistoryFile, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error('Error loading undo history:', error.message);
+    }
+    return [];
+  }
+
+  saveUndoHistory() {
+    try {
+      fs.writeFileSync(this.undoHistoryFile, JSON.stringify(this.undoHistory, null, 2));
+      return true;
+    } catch (error) {
+      console.error('Error saving undo history:', error.message);
+      return false;
+    }
+  }
+
   getNextId() {
     if (this.todos.length === 0) return 1;
     return Math.max(...this.todos.map(todo => todo.id)) + 1;
+  }
+
+  // Add a delete operation to the undo history
+  addToUndoHistory(operation) {
+    this.undoHistory.push({
+      ...operation,
+      timestamp: new Date().toISOString()
+    });
+
+    // Limit history size
+    if (this.undoHistory.length > this.maxUndoHistory) {
+      this.undoHistory.shift();
+    }
+
+    // Save to disk
+    this.saveUndoHistory();
+  }
+
+  // Get the last undoable operation
+  getLastUndoOperation() {
+    return this.undoHistory.length > 0 ? this.undoHistory[this.undoHistory.length - 1] : null;
+  }
+
+  // Clear undo history
+  clearUndoHistory() {
+    this.undoHistory = [];
+    this.saveUndoHistory();
+  }
+
+  // Undo the last delete operation
+  undoLastDelete() {
+    if (this.undoHistory.length === 0) {
+      return { success: false, error: 'No delete operations to undo' };
+    }
+
+    const lastOperation = this.undoHistory.pop();
+
+    // Restore deleted todos
+    const restoredTodos = lastOperation.deletedTodos;
+    const conflictingIds = [];
+    const restoredSuccessfully = [];
+
+    for (const todo of restoredTodos) {
+      // Check if a todo with this ID already exists
+      if (this.todos.find(t => t.id === todo.id)) {
+        conflictingIds.push(todo.id);
+      } else {
+        this.todos.push(todo);
+        restoredSuccessfully.push(todo);
+      }
+    }
+
+    // Sort todos by ID to maintain order
+    this.todos.sort((a, b) => a.id - b.id);
+
+    // Update nextId if necessary
+    if (this.todos.length > 0) {
+      this.nextId = Math.max(this.nextId, ...this.todos.map(t => t.id)) + 1;
+    }
+
+    if (this.saveTodos()) {
+      // Save undo history (operation was removed from history)
+      this.saveUndoHistory();
+
+      return {
+        success: true,
+        operation: lastOperation,
+        restoredTodos: restoredSuccessfully,
+        restoredCount: restoredSuccessfully.length,
+        conflictingIds: conflictingIds.length > 0 ? conflictingIds : undefined,
+        totalCount: this.todos.length
+      };
+    } else {
+      // If save fails, restore the undo history
+      this.undoHistory.push(lastOperation);
+      this.saveUndoHistory();
+      // Reload todos to restore original state
+      this.todos = this.loadTodos();
+      return { success: false, error: 'Failed to save restored todos' };
+    }
   }
 
   addTodo(description) {
@@ -99,6 +204,13 @@ class TodoCore {
     this.todos.splice(todoIndex, 1);
 
     if (this.saveTodos()) {
+      // Add to undo history
+      this.addToUndoHistory({
+        type: 'single-delete',
+        deletedTodos: [{ ...todo }],
+        deletedCount: 1
+      });
+
       return { success: true, todo };
     } else {
       return { success: false, error: 'Failed to save todo' };
@@ -149,6 +261,14 @@ class TodoCore {
     this.todos = this.todos.filter(todo => !numIds.includes(todo.id));
 
     if (this.saveTodos()) {
+      // Add to undo history
+      this.addToUndoHistory({
+        type: 'bulk-delete-ids',
+        deletedTodos: deletedTodos.map(todo => ({ ...todo })),
+        deletedCount: deletedTodos.length,
+        originalIds: numIds
+      });
+
       return {
         success: true,
         deletedTodos,
@@ -177,6 +297,13 @@ class TodoCore {
     this.todos = this.todos.filter(todo => !todo.completed);
 
     if (this.saveTodos()) {
+      // Add to undo history
+      this.addToUndoHistory({
+        type: 'bulk-delete-completed',
+        deletedTodos: completedTodos.map(todo => ({ ...todo })),
+        deletedCount: completedTodos.length
+      });
+
       return {
         success: true,
         deletedTodos: completedTodos,
@@ -204,6 +331,13 @@ class TodoCore {
     this.todos = [];
 
     if (this.saveTodos()) {
+      // Add to undo history
+      this.addToUndoHistory({
+        type: 'bulk-delete-all',
+        deletedTodos: allTodos.map(todo => ({ ...todo })),
+        deletedCount: allTodos.length
+      });
+
       return {
         success: true,
         deletedTodos: allTodos,
@@ -255,6 +389,16 @@ function bulk_delete_all() {
   return core.bulkDeleteAll();
 }
 
+function undo_last_delete() {
+  const core = new TodoCore();
+  return core.undoLastDelete();
+}
+
+function get_last_undo_operation() {
+  const core = new TodoCore();
+  return core.getLastUndoOperation();
+}
+
 module.exports = {
   TodoCore,
   add_todo,
@@ -263,5 +407,7 @@ module.exports = {
   delete_todo,
   bulk_delete_todos,
   bulk_delete_completed,
-  bulk_delete_all
+  bulk_delete_all,
+  undo_last_delete,
+  get_last_undo_operation
 };
