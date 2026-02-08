@@ -1,9 +1,26 @@
 #!/usr/bin/env node
 
 const { TodoCore } = require('./todo-core');
+const readline = require('readline');
 
 // Create a TodoCore instance for the CLI
 const todoCore = new TodoCore();
+
+// Helper function to get user confirmation
+function getUserConfirmation(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      const normalizedAnswer = answer.toLowerCase().trim();
+      resolve(normalizedAnswer === 'y' || normalizedAnswer === 'yes');
+    });
+  });
+}
 
 // Add a new todo
 function addTodo(description) {
@@ -52,7 +69,53 @@ function completeTodo(id) {
 }
 
 // Delete a todo
-function deleteTodo(id) {
+async function deleteTodo(id, force = false) {
+  // First, validate that the todo exists and get its details
+  const numId = parseInt(id);
+  if (isNaN(numId)) {
+    console.error('❌ Error: Invalid ID format');
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  const todos = todoCore.listTodos();
+  const todo = todos.find(t => t.id === numId);
+
+  if (!todo) {
+    console.error(`❌ Error: Todo with ID ${numId} not found`);
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  // Show todo details and ask for confirmation unless force is used
+  const status = todo.completed ? '✓' : ' ';
+
+  if (!force) {
+    console.log('🗑️  You are about to delete the following todo:');
+    console.log('');
+    console.log(`   ID: #${todo.id}`);
+    console.log(`   Description: ${todo.description}`);
+    console.log(`   Status: [${status}] ${todo.completed ? 'Completed' : 'Pending'}`);
+    if (todo.createdAt) {
+      console.log(`   Created: ${new Date(todo.createdAt).toLocaleString()}`);
+    }
+    if (todo.completedAt) {
+      console.log(`   Completed: ${new Date(todo.completedAt).toLocaleString()}`);
+    }
+    console.log('');
+
+    // Ask for confirmation
+    const confirmed = await getUserConfirmation('❓ Are you sure you want to delete this todo? This cannot be undone. (y/N): ');
+
+    if (!confirmed) {
+      console.log('✅ Delete operation cancelled. Todo was not deleted.');
+      return true; // Return true because this is not an error, user chose to cancel
+    }
+  } else {
+    console.log('⚡ Force deleting todo (skipping confirmation)...');
+  }
+
+  // Proceed with deletion
   const result = todoCore.deleteTodo(id);
 
   if (!result.success) {
@@ -61,7 +124,6 @@ function deleteTodo(id) {
     return false;
   }
 
-  const status = result.todo.completed ? '✓' : ' ';
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
 
@@ -87,24 +149,31 @@ function showDeleteHelp() {
   console.log('Delete a todo item permanently from your list.');
   console.log('');
   console.log('📋 SYNTAX:');
-  console.log('  node index.js delete <id>           - Delete todo by ID');
+  console.log('  node index.js delete <id>           - Delete todo by ID (with confirmation)');
+  console.log('  node index.js delete <id> --force   - Delete todo by ID (skip confirmation)');
+  console.log('  node index.js delete <id> -f        - Delete todo by ID (skip confirmation, short form)');
   console.log('  node index.js remove <id>           - Same as delete');
   console.log('  node index.js rm <id>               - Same as delete');
   console.log('');
   console.log('📝 PARAMETERS:');
   console.log('  <id>                                - The ID number of the todo to delete');
   console.log('                                        Must be a valid number (1, 2, 3, etc.)');
+  console.log('  --force, -f                         - Skip confirmation prompt (optional)');
   console.log('');
   console.log('✨ EXAMPLES:');
-  console.log('  node index.js delete 5              - Delete todo with ID 5');
+  console.log('  node index.js delete 5              - Delete todo with ID 5 (with confirmation)');
+  console.log('  node index.js delete 5 --force      - Delete todo with ID 5 (no confirmation)');
+  console.log('  node index.js delete 5 -f           - Delete todo with ID 5 (no confirmation, short form)');
   console.log('  node index.js remove 2              - Delete todo with ID 2 (alias)');
-  console.log('  node index.js rm 10                 - Delete todo with ID 10 (alias)');
+  console.log('  node index.js rm 10 --force         - Delete todo with ID 10 (no confirmation, alias)');
   console.log('');
   console.log('💡 TIPS:');
   console.log('  • Use "node index.js list" to see all todos and their IDs');
   console.log('  • Deleting a todo is permanent - it cannot be undone');
   console.log('  • You can delete both completed and pending todos');
   console.log('  • The app will show you what was deleted and remaining count');
+  console.log('  • Use --force/-f flag to skip confirmation for faster deletion');
+  console.log('  • Force flag can be placed before or after the ID');
   console.log('');
   console.log('❌ COMMON ERRORS:');
   console.log('  • "Todo not found" - Use "list" to check available IDs');
@@ -127,14 +196,15 @@ function showUsage() {
   console.log('  add "description"                   - Add a new todo');
   console.log('  list                                - List all todos');
   console.log('  complete <id>                       - Mark todo as complete');
-  console.log('  delete <id>                         - Delete a todo');
+  console.log('  delete <id> [--force|-f]            - Delete a todo (optionally skip confirmation)');
   console.log('  help [command]                      - Show this help or help for specific command');
   console.log('');
   console.log('EXAMPLES:');
   console.log('  node index.js add "Buy groceries"   - Add a new todo');
   console.log('  node index.js list                  - Show all todos');
   console.log('  node index.js complete 1            - Mark todo #1 as done');
-  console.log('  node index.js delete 2              - Delete todo #2');
+  console.log('  node index.js delete 2              - Delete todo #2 (with confirmation)');
+  console.log('  node index.js delete 2 --force      - Delete todo #2 (skip confirmation)');
   console.log('  node index.js help delete           - Get detailed help for delete command');
   console.log('');
   console.log('COMMAND ALIASES:');
@@ -228,7 +298,10 @@ function parseArguments() {
     case 'delete':
     case 'remove':
     case 'rm':
-      return { command: 'delete', id: args[1] };
+      const deleteArgs = args.slice(1);
+      const force = deleteArgs.includes('--force') || deleteArgs.includes('-f');
+      const id = deleteArgs.find(arg => !arg.startsWith('-'));
+      return { command: 'delete', id, force };
     case 'help':
     case '--help':
     case '-h':
@@ -264,7 +337,7 @@ function validateCommand(parsed) {
     case 'delete':
       if (!parsed.id) {
         console.error('❌ Error: Delete command requires a todo ID');
-        console.error('📋 Usage: node index.js delete <id>');
+        console.error('📋 Usage: node index.js delete <id> [--force|-f]');
         console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
         return false;
       }
@@ -286,7 +359,7 @@ function validateCommand(parsed) {
 }
 
 // Main function
-function main() {
+async function main() {
   const parsed = parseArguments();
 
   if (!validateCommand(parsed)) {
@@ -306,7 +379,7 @@ function main() {
       success = completeTodo(parsed.id);
       break;
     case 'delete':
-      success = deleteTodo(parsed.id);
+      success = await deleteTodo(parsed.id, parsed.force);
       break;
     case 'help':
       if (parsed.subcommand) {
@@ -324,5 +397,8 @@ function main() {
 
 // Run the app
 if (require.main === module) {
-  main();
+  main().catch((error) => {
+    console.error('An unexpected error occurred:', error);
+    process.exit(1);
+  });
 }
