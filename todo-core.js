@@ -104,6 +104,119 @@ class TodoCore {
       return { success: false, error: 'Failed to save todo' };
     }
   }
+
+  bulkDeleteTodos(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { success: false, error: 'No IDs provided for bulk deletion' };
+    }
+
+    const numIds = [];
+    const invalidIds = [];
+
+    // Validate all IDs first
+    for (const id of ids) {
+      const numId = parseInt(id);
+      if (isNaN(numId)) {
+        invalidIds.push(id);
+      } else {
+        numIds.push(numId);
+      }
+    }
+
+    if (invalidIds.length > 0) {
+      return { success: false, error: `Invalid ID format: ${invalidIds.join(', ')}` };
+    }
+
+    const deletedTodos = [];
+    const notFoundIds = [];
+    const originalTodosLength = this.todos.length;
+
+    // Find todos to delete
+    for (const numId of numIds) {
+      const todo = this.todos.find(t => t.id === numId);
+      if (todo) {
+        deletedTodos.push({ ...todo });
+      } else {
+        notFoundIds.push(numId);
+      }
+    }
+
+    if (deletedTodos.length === 0) {
+      return { success: false, error: `No todos found with IDs: ${numIds.join(', ')}` };
+    }
+
+    // Remove todos from the list
+    this.todos = this.todos.filter(todo => !numIds.includes(todo.id));
+
+    if (this.saveTodos()) {
+      return {
+        success: true,
+        deletedTodos,
+        deletedCount: deletedTodos.length,
+        notFoundIds: notFoundIds.length > 0 ? notFoundIds : undefined,
+        originalCount: originalTodosLength,
+        remainingCount: this.todos.length
+      };
+    } else {
+      // Restore todos if saving failed
+      this.todos = this.loadTodos();
+      return { success: false, error: 'Failed to save changes' };
+    }
+  }
+
+  bulkDeleteCompleted() {
+    const completedTodos = this.todos.filter(todo => todo.completed);
+
+    if (completedTodos.length === 0) {
+      return { success: false, error: 'No completed todos found to delete' };
+    }
+
+    const originalTodosLength = this.todos.length;
+
+    // Remove completed todos
+    this.todos = this.todos.filter(todo => !todo.completed);
+
+    if (this.saveTodos()) {
+      return {
+        success: true,
+        deletedTodos: completedTodos,
+        deletedCount: completedTodos.length,
+        originalCount: originalTodosLength,
+        remainingCount: this.todos.length
+      };
+    } else {
+      // Restore todos if saving failed
+      this.todos = this.loadTodos();
+      return { success: false, error: 'Failed to save changes' };
+    }
+  }
+
+  bulkDeleteAll() {
+    const allTodos = [...this.todos];
+
+    if (allTodos.length === 0) {
+      return { success: false, error: 'No todos found to delete' };
+    }
+
+    const originalTodosLength = this.todos.length;
+
+    // Clear all todos
+    this.todos = [];
+
+    if (this.saveTodos()) {
+      return {
+        success: true,
+        deletedTodos: allTodos,
+        deletedCount: allTodos.length,
+        originalCount: originalTodosLength,
+        remainingCount: 0
+      };
+    } else {
+      // Restore todos if saving failed
+      this.todos = this.loadTodos();
+      return { success: false, error: 'Failed to save changes' };
+    }
+  }
 }
 
 // Functional API
@@ -127,10 +240,28 @@ function delete_todo(id) {
   return core.deleteTodo(id);
 }
 
+function bulk_delete_todos(ids) {
+  const core = new TodoCore();
+  return core.bulkDeleteTodos(ids);
+}
+
+function bulk_delete_completed() {
+  const core = new TodoCore();
+  return core.bulkDeleteCompleted();
+}
+
+function bulk_delete_all() {
+  const core = new TodoCore();
+  return core.bulkDeleteAll();
+}
+
 module.exports = {
   TodoCore,
   add_todo,
   list_todos,
   complete_todo,
-  delete_todo
+  delete_todo,
+  bulk_delete_todos,
+  bulk_delete_completed,
+  bulk_delete_all
 };
