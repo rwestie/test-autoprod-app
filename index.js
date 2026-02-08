@@ -4,10 +4,15 @@ const { TodoCoreEnhanced } = require('./todo-core-enhanced');
 const { StorageConfig } = require('./storage-config');
 const { ConfirmationUtil } = require('./confirmation-util');
 const { DeleteCommandInterface } = require('./delete-command-interface');
+const { AutoSaveIntegration } = require('./autosave-integration');
+const { AutoSaveConfig } = require('./autosave-config');
+const { StateIntegration } = require('./state-integration');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
 let deleteInterface = null;
+let autoSaveIntegration = null;
+let stateIntegration = null;
 
 // Initialize todo core with storage options
 async function initializeTodoCore(storageOptions = {}) {
@@ -20,38 +25,63 @@ async function initializeTodoCore(storageOptions = {}) {
   // Ensure initialization is complete
   await todoCore.initialize();
 
+  // Initialize autosave integration with enhanced state synchronization
+  const autoSaveConfig = AutoSaveConfig.fromEnvironment();
+  autoSaveIntegration = new AutoSaveIntegration(todoCore, autoSaveConfig);
+
+  // Initialize state integration for real-time monitoring and validation
+  stateIntegration = new StateIntegration(todoCore, autoSaveIntegration, {
+    enableStateMonitoring: true,
+    enableStateValidation: true,
+    enableIntegrityChecks: true,
+    enableRealTimeSync: true
+  });
+
   // Initialize delete command interface
   deleteInterface = new DeleteCommandInterface(todoCore);
 }
 
-// Add a new todo
+// Add a new todo with enhanced autosave integration
 async function addTodo(description) {
-  const result = await todoCore.addTodo(description);
+  // Record state change
+  stateIntegration.recordStateChange('add', { description });
+
+  const result = await autoSaveIntegration.addTodo(description);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
     if (result.storage && !result.storage.saved) {
       console.error('⚠️  Warning: Changes were not saved to storage');
     }
+    stateIntegration.recordStateChange('add-failed', { description, error: result.error });
     return false;
   }
 
   console.log(`✅ Added todo #${result.todo.id}: ${result.todo.description}`);
 
-  // Display storage info if available
-  if (result.storage && result.storage.saved) {
-    console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
-    if (result.storage.duration !== undefined) {
-      console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+  // Display enhanced autosave messages
+  if (result.autoSaveMessages && result.autoSaveMessages.length > 0) {
+    result.autoSaveMessages.forEach(message => console.log(message));
+  } else {
+    // Fallback to legacy storage info display
+    if (result.storage && result.storage.saved) {
+      console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+      if (result.storage.duration !== undefined) {
+        console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+      }
     }
   }
 
+  stateIntegration.recordStateChange('add-success', { todoId: result.todo.id, storageInfo: result.storage });
   return true;
 }
 
 // List all todos with optional filtering
 async function listTodos(filter = {}) {
-  const todos = await todoCore.listTodos();
+  // Record state change for read operation
+  stateIntegration.recordStateChange('list', { filter });
+
+  const todos = await autoSaveIntegration.listTodos();
 
   // Apply filters
   let filteredTodos = todos;
@@ -171,9 +201,12 @@ async function listTodos(filter = {}) {
   }
 }
 
-// Mark todo as complete
+// Mark todo as complete with enhanced autosave integration
 async function completeTodo(id) {
-  const result = await todoCore.completeTodo(id);
+  // Record state change
+  stateIntegration.recordStateChange('complete', { todoId: id });
+
+  const result = await autoSaveIntegration.completeTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -188,11 +221,16 @@ async function completeTodo(id) {
   } else {
     console.log(`✅ Marked todo #${result.todo.id} as complete: ${result.todo.description}`);
 
-    // Display storage info if available
-    if (result.storage && result.storage.saved) {
-      console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
-      if (result.storage.duration !== undefined) {
-        console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+    // Display enhanced autosave messages
+    if (result.autoSaveMessages && result.autoSaveMessages.length > 0) {
+      result.autoSaveMessages.forEach(message => console.log(message));
+    } else {
+      // Fallback to legacy storage info display
+      if (result.storage && result.storage.saved) {
+        console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+        if (result.storage.duration !== undefined) {
+          console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+        }
       }
     }
   }
@@ -200,7 +238,7 @@ async function completeTodo(id) {
 }
 
 async function uncompleteTodo(id) {
-  const result = await todoCore.incompleteTodo(id);
+  const result = await autoSaveIntegration.incompleteTodo(id);
 
   if (!result.success) {
     console.error(`❌ Error: ${result.error}`);
@@ -215,11 +253,16 @@ async function uncompleteTodo(id) {
   } else {
     console.log(`🔄 Marked todo #${result.todo.id} as incomplete: ${result.todo.description}`);
 
-    // Display storage info if available
-    if (result.storage && result.storage.saved) {
-      console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
-      if (result.storage.duration !== undefined) {
-        console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+    // Display enhanced autosave messages
+    if (result.autoSaveMessages && result.autoSaveMessages.length > 0) {
+      result.autoSaveMessages.forEach(message => console.log(message));
+    } else {
+      // Fallback to legacy storage info display
+      if (result.storage && result.storage.saved) {
+        console.log(`💾 Saved ${result.storage.count} todos to ${result.storage.location}`);
+        if (result.storage.duration !== undefined) {
+          console.log(`⚡ Save completed in ${result.storage.duration}ms`);
+        }
       }
     }
   }
@@ -624,6 +667,83 @@ async function showStorageStatus() {
   console.log('  TODO_ENABLE_BACKUPS                 - Enable backups (true/false)');
   console.log('  TODO_BACKUP_RETENTION               - Number of backups to keep');
   console.log('  TODO_LOG_LEVEL                      - Logging level (debug/info/warn/error)');
+}
+
+// Show state integration status and monitoring
+async function showStateStatus() {
+  console.log('🔄 STATE INTEGRATION STATUS');
+  console.log('');
+
+  // Get state metrics
+  const metrics = stateIntegration.getStateMetrics();
+
+  console.log('⚙️  CONFIGURATION:');
+  console.log(`  State monitoring enabled: ${stateIntegration.config.enableStateMonitoring ? '✅ Yes' : '❌ No'}`);
+  console.log(`  State validation enabled: ${stateIntegration.config.enableStateValidation ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Integrity checks enabled: ${stateIntegration.config.enableIntegrityChecks ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Real-time sync enabled: ${stateIntegration.config.enableRealTimeSync ? '✅ Yes' : '❌ No'}`);
+  console.log(`  Sync monitoring active: ${metrics.syncMonitoringActive ? '✅ Yes' : '❌ No'}`);
+  console.log('');
+
+  console.log('📊 STATE METRICS:');
+  console.log(`  Total operations: ${metrics.totalOperations}`);
+  console.log(`  Read operations: ${metrics.readOperations}`);
+  console.log(`  Write operations: ${metrics.writeOperations}`);
+  console.log(`  Validation errors: ${metrics.validationErrors}`);
+  console.log(`  Integrity errors: ${metrics.integrityErrors}`);
+  console.log(`  State history size: ${metrics.stateHistorySize}`);
+  console.log(`  Memory usage: ${metrics.memoryUsage} MB`);
+  console.log(`  Uptime: ${Math.round(metrics.uptime)} seconds`);
+  console.log('');
+
+  if (metrics.lastSyncTime) {
+    const lastSync = new Date(metrics.lastSyncTime);
+    const syncAge = Math.round((Date.now() - lastSync.getTime()) / 1000);
+    console.log('🕒 SYNCHRONIZATION:');
+    console.log(`  Last sync: ${lastSync.toLocaleString()} (${syncAge}s ago)`);
+    console.log(`  Sync interval: ${stateIntegration.config.syncInterval / 1000}s`);
+    console.log('');
+  }
+
+  // Perform a real-time validation
+  console.log('🔍 REAL-TIME VALIDATION:');
+  const validation = await stateIntegration.validateState();
+
+  if (validation.success) {
+    console.log('  Status: ✅ State is valid and consistent');
+    if (validation.stats) {
+      console.log(`  Todo count: ${validation.stats.todoCount}`);
+      console.log(`  Storage count: ${validation.stats.storageCount}`);
+      console.log(`  Memory usage: ${Math.round(validation.stats.memoryUsage)} MB`);
+    }
+  } else {
+    console.log('  Status: ❌ State validation failed');
+    console.log('  Errors:');
+    validation.errors.forEach(error => console.log(`    • ${error}`));
+  }
+
+  if (validation.warnings && validation.warnings.length > 0) {
+    console.log('  Warnings:');
+    validation.warnings.forEach(warning => console.log(`    • ${warning}`));
+  }
+
+  console.log('');
+
+  // Show recent state history
+  const history = stateIntegration.getStateHistory(5);
+  if (history.length > 0) {
+    console.log('📜 RECENT OPERATIONS:');
+    history.forEach((entry, index) => {
+      const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+      console.log(`  ${index + 1}. [${timestamp}] ${entry.operation}`);
+    });
+    console.log('');
+  }
+
+  console.log('💡 COMMANDS:');
+  console.log('  node index.js state validate         - Run detailed state validation');
+  console.log('  node index.js state history          - Show detailed state history');
+  console.log('  node index.js autosave               - Show autosave integration status');
 }
 
 // Show migration status and information
@@ -1598,6 +1718,8 @@ function parseArguments() {
     case 'auto-save':
     case 'status':
       return { command: 'autosave', ...parsed };
+    case 'state':
+      return { command: 'state', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
     case 'migrate':
     case 'migration':
       return { command: 'migrate', subcommand: filteredArgs[1], args: filteredArgs.slice(2), ...parsed };
@@ -1781,6 +1903,26 @@ async function main() {
         break;
       case 'autosave':
         await showStorageStatus();
+        break;
+      case 'state':
+        if (parsed.subcommand === 'validate') {
+          const validation = await stateIntegration.validateState({ deep: true });
+          if (validation.success) {
+            console.log('✅ State validation passed');
+          } else {
+            console.log('❌ State validation failed');
+            validation.errors.forEach(error => console.log(`  • ${error}`));
+          }
+        } else if (parsed.subcommand === 'history') {
+          const history = stateIntegration.getStateHistory(20);
+          console.log('📜 STATE OPERATION HISTORY (Last 20):');
+          history.forEach((entry, index) => {
+            const timestamp = new Date(entry.timestamp).toLocaleString();
+            console.log(`  ${index + 1}. [${timestamp}] ${entry.operation}`);
+          });
+        } else {
+          await showStateStatus();
+        }
         break;
       case 'migrate':
         if (parsed.subcommand === 'apply' || (parsed.subcommand && parsed.subcommand !== 'status')) {

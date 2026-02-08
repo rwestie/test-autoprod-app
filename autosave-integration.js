@@ -139,12 +139,12 @@ class AutoSaveIntegration {
   }
 
   // Enhanced add todo with auto-save integration
-  addTodo(description, options = {}) {
+  async addTodo(description, options = {}) {
     if (!this.config.isEnabled()) {
       return this.todoCore.addTodo(description, options);
     }
 
-    const result = this.todoCore.addTodo(description, options);
+    const result = await this.todoCore.addTodo(description, options);
 
     // Update performance stats
     this.updatePerformanceStats(result);
@@ -162,18 +162,40 @@ class AutoSaveIntegration {
   }
 
   // Enhanced complete todo with auto-save integration
-  completeTodo(id) {
+  async completeTodo(id) {
     if (!this.config.isEnabled()) {
       return this.todoCore.completeTodo(id);
     }
 
-    const result = this.todoCore.completeTodo(id);
+    const result = await this.todoCore.completeTodo(id);
 
     // Update performance stats
     this.updatePerformanceStats(result);
 
     // Generate auto-save messages
     const messages = this.formatAutoSaveMessage('Complete todo', result);
+
+    return {
+      ...result,
+      autoSaveMessages: messages,
+      performanceLevel: result.storage?.duration ?
+        this.config.getPerformanceLevel(result.storage.duration) : null,
+    };
+  }
+
+  // Enhanced incomplete todo with auto-save integration
+  async incompleteTodo(id) {
+    if (!this.config.isEnabled()) {
+      return this.todoCore.incompleteTodo(id);
+    }
+
+    const result = await this.todoCore.incompleteTodo(id);
+
+    // Update performance stats
+    this.updatePerformanceStats(result);
+
+    // Generate auto-save messages
+    const messages = this.formatAutoSaveMessage('Incomplete todo', result);
 
     return {
       ...result,
@@ -228,7 +250,7 @@ class AutoSaveIntegration {
   }
 
   // Pass-through methods for non-modifying operations
-  listTodos() {
+  async listTodos() {
     return this.todoCore.listTodos();
   }
 
