@@ -30,8 +30,15 @@ class StorageConfig {
 
       // Performance settings
       batchSize: options.batchSize || 1000,
-      compressionThreshold: options.compressionThreshold || 10000,
+      compressionThreshold: options.compressionThreshold || 1024,
       enableCompression: options.enableCompression || false,
+
+      // Enhanced storage features
+      enableIncrementalBackups: options.enableIncrementalBackups || false,
+      enableIntegrityChecks: options.enableIntegrityChecks !== false, // Default true
+      enablePerformanceMonitoring: options.enablePerformanceMonitoring !== false, // Default true
+      enableAutoOptimization: options.enableAutoOptimization || false,
+      cleanupChecksumOnExit: options.cleanupChecksumOnExit !== false, // Default true
 
       // Error handling
       maxRetries: options.maxRetries || 3,
@@ -145,6 +152,22 @@ class StorageConfig {
       options.enableCompression = process.env.TODO_ENABLE_COMPRESSION === 'true';
     }
 
+    if (process.env.TODO_COMPRESSION_THRESHOLD) {
+      options.compressionThreshold = parseInt(process.env.TODO_COMPRESSION_THRESHOLD, 10);
+    }
+
+    if (process.env.TODO_ENABLE_INCREMENTAL_BACKUPS !== undefined) {
+      options.enableIncrementalBackups = process.env.TODO_ENABLE_INCREMENTAL_BACKUPS === 'true';
+    }
+
+    if (process.env.TODO_ENABLE_AUTO_OPTIMIZATION !== undefined) {
+      options.enableAutoOptimization = process.env.TODO_ENABLE_AUTO_OPTIMIZATION === 'true';
+    }
+
+    if (process.env.TODO_ENABLE_INTEGRITY_CHECKS !== undefined) {
+      options.enableIntegrityChecks = process.env.TODO_ENABLE_INTEGRITY_CHECKS === 'true';
+    }
+
     return new StorageConfig(options);
   }
 
@@ -168,7 +191,28 @@ class StorageConfig {
       maxRetries: 5,
       retryDelay: 200,
       enableCompression: true,
-      compressionThreshold: 5000
+      compressionThreshold: 2048,
+      enableIncrementalBackups: true,
+      enableIntegrityChecks: true,
+      enablePerformanceMonitoring: true,
+      enableAutoOptimization: true
+    });
+  }
+
+  // Create high-performance configuration
+  static highPerformance() {
+    return new StorageConfig({
+      logLevel: 'error',
+      enableBackups: false,
+      maxRetries: 1,
+      retryDelay: 50,
+      enableCompression: true,
+      compressionThreshold: 512,
+      enableIncrementalBackups: false,
+      enableIntegrityChecks: false,
+      enablePerformanceMonitoring: true,
+      enableAutoOptimization: false,
+      useTempFiles: false // Faster writes, less safety
     });
   }
 

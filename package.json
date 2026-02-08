@@ -7,10 +7,11 @@
     "todo": "./index.js"
   },
   "scripts": {
-    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-migration-manager.js && node test-recovery-manager.js && node test-delete-by-index.js && node test-batch-delete.js && node test-undo-manager.js && node test-undo-integration.js && node test-list-filters.js && node test-delete-confirmation-enhancements.js",
+    "test": "node test.js && node test-todo-model.js && node test-autosave-integration.js && node test-storage-config.js && node test-enhanced-storage.js && node test-migration-manager.js && node test-recovery-manager.js && node test-delete-by-index.js && node test-batch-delete.js && node test-undo-manager.js && node test-undo-integration.js && node test-list-filters.js && node test-delete-confirmation-enhancements.js",
     "test:core": "node test.js",
     "test:autosave": "node test-autosave-integration.js",
     "test:storage": "node test-storage-config.js",
+    "test:enhanced-storage": "node test-enhanced-storage.js",
     "test:migration": "node test-migration-manager.js",
     "test:recovery": "node test-recovery-manager.js",
     "test:batch-delete": "node test-batch-delete.js",
