@@ -7,6 +7,7 @@ const { DeleteCommandInterface } = require('./delete-command-interface');
 const { AutoSaveIntegration } = require('./autosave-integration');
 const { AutoSaveConfig } = require('./autosave-config');
 const { StateIntegration } = require('./state-integration');
+const { StorageErrorHandler } = require('./storage-error-handler');
 
 // Global variables for configuration - will be initialized in main()
 let todoCore = null;
@@ -16,29 +17,56 @@ let stateIntegration = null;
 
 // Initialize todo core with storage options
 async function initializeTodoCore(storageOptions = {}) {
-  // Create storage configuration
-  const storageConfig = StorageConfig.fromEnvironment().merge(storageOptions);
+  try {
+    // Create storage configuration
+    const storageConfig = StorageConfig.fromEnvironment().merge(storageOptions);
 
-  // Create a TodoCoreEnhanced instance with the new storage interface
-  todoCore = new TodoCoreEnhanced(storageConfig, null, 'json-file');
+    // Create a TodoCoreEnhanced instance with the new storage interface
+    todoCore = new TodoCoreEnhanced(storageConfig, null, 'json-file');
 
-  // Ensure initialization is complete
-  await todoCore.initialize();
+    // Ensure initialization is complete
+    const initResult = await todoCore.initialize();
+    if (!initResult.success) {
+      displayStorageError(initResult);
+      throw new Error(`Storage initialization failed: ${initResult.error}`);
+    }
 
-  // Initialize autosave integration with enhanced state synchronization
-  const autoSaveConfig = AutoSaveConfig.fromEnvironment();
-  autoSaveIntegration = new AutoSaveIntegration(todoCore, autoSaveConfig);
+    // Initialize autosave integration with enhanced state synchronization
+    const autoSaveConfig = AutoSaveConfig.fromEnvironment();
+    autoSaveIntegration = new AutoSaveIntegration(todoCore, autoSaveConfig);
 
-  // Initialize state integration for real-time monitoring and validation
-  stateIntegration = new StateIntegration(todoCore, autoSaveIntegration, {
-    enableStateMonitoring: true,
-    enableStateValidation: true,
-    enableIntegrityChecks: true,
-    enableRealTimeSync: true
-  });
+    // Initialize state integration for real-time monitoring and validation
+    stateIntegration = new StateIntegration(todoCore, autoSaveIntegration, {
+      enableStateMonitoring: true,
+      enableStateValidation: true,
+      enableIntegrityChecks: true,
+      enableRealTimeSync: true
+    });
 
-  // Initialize delete command interface
-  deleteInterface = new DeleteCommandInterface(todoCore);
+    // Initialize delete command interface
+    deleteInterface = new DeleteCommandInterface(todoCore);
+  } catch (error) {
+    console.error('🚨 Failed to initialize todo application');
+    throw error;
+  }
+}
+
+/**
+ * Display user-friendly error messages with guidance
+ * @param {object} result - The operation result from storage
+ */
+function displayStorageError(result) {
+  if (result.errorDetails) {
+    // Use enhanced error details from StorageErrorHandler
+    const userMessage = StorageErrorHandler.formatUserMessage(result.errorDetails, true);
+    console.error(userMessage);
+  } else {
+    // Fallback to basic error display
+    console.error(`❌ Error: ${result.error}`);
+    if (result.storage && !result.storage.saved) {
+      console.error('⚠️  Warning: Changes were not saved to storage');
+    }
+  }
 }
 
 // Add a new todo with enhanced autosave integration
@@ -49,10 +77,7 @@ async function addTodo(description) {
   const result = await autoSaveIntegration.addTodo(description);
 
   if (!result.success) {
-    console.error(`❌ Error: ${result.error}`);
-    if (result.storage && !result.storage.saved) {
-      console.error('⚠️  Warning: Changes were not saved to storage');
-    }
+    displayStorageError(result);
     stateIntegration.recordStateChange('add-failed', { description, error: result.error });
     return false;
   }
@@ -209,10 +234,7 @@ async function completeTodo(id) {
   const result = await autoSaveIntegration.completeTodo(id);
 
   if (!result.success) {
-    console.error(`❌ Error: ${result.error}`);
-    if (result.storage && !result.storage.saved) {
-      console.error('⚠️  Warning: Changes were not saved to storage');
-    }
+    displayStorageError(result);
     return false;
   }
 
@@ -241,10 +263,7 @@ async function uncompleteTodo(id) {
   const result = await autoSaveIntegration.incompleteTodo(id);
 
   if (!result.success) {
-    console.error(`❌ Error: ${result.error}`);
-    if (result.storage && !result.storage.saved) {
-      console.error('⚠️  Warning: Changes were not saved to storage');
-    }
+    displayStorageError(result);
     return false;
   }
 
@@ -2010,7 +2029,20 @@ async function main() {
       process.exit(1);
     }
   } catch (error) {
-    console.error('❌ Fatal error:', error.message);
+    // Check if this is a storage-related error with enhanced info
+    if (error.errorDetails) {
+      console.error('🚨 Application failed to start due to storage issue:');
+      displayStorageError(error);
+    } else {
+      console.error('❌ Fatal error:', error.message);
+    }
+
+    console.error('\n💡 Possible solutions:');
+    console.error('  • Check file permissions in your data directory');
+    console.error('  • Verify you have write access to ~/.todos/');
+    console.error('  • Use --data-dir to specify a different location');
+    console.error('  • Run: node index.js help config');
+
     process.exit(1);
   }
 }
@@ -2018,7 +2050,10 @@ async function main() {
 // Run the app
 if (require.main === module) {
   main().catch(error => {
-    console.error('❌ Fatal error:', error.message);
+    console.error('🚨 Unexpected application error:', error.message);
+    if (error.stack) {
+      console.error('\nStack trace:', error.stack);
+    }
     process.exit(1);
   });
 }

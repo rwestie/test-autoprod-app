@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { StorageInterface, StorageResult, StorageEventEmitter } = require('./storage-interface');
+const { StorageErrorHandler } = require('./storage-error-handler');
 
 /**
  * JSON file-based storage implementation
@@ -40,8 +41,20 @@ class JsonFileStorage extends StorageInterface {
         dataDirectory: dataDir
       });
     } catch (error) {
-      this.eventEmitter.emit('error', { operation: 'initialize', error: error.message });
-      return StorageResult.failure(`Failed to initialize storage: ${error.message}`);
+      const classification = StorageErrorHandler.classifyError(error, 'directory_creation', {
+        targetDir: path.dirname(this.dataFile)
+      });
+
+      this.eventEmitter.emit('error', {
+        operation: 'initialize',
+        error: error.message,
+        classification
+      });
+
+      return StorageErrorHandler.createErrorResult(classification, {
+        initialized: false,
+        dataDirectory: path.dirname(this.dataFile)
+      });
     }
   }
 
@@ -84,17 +97,31 @@ class JsonFileStorage extends StorageInterface {
       });
 
     } catch (error) {
+      const classification = StorageErrorHandler.classifyError(error, 'load', {
+        dataFile: this.dataFile
+      });
+
       this.log('error', `Error loading data: ${error.message}`);
 
-      // Try to restore from backup
-      const backupResult = await this.restoreFromBackup();
-      if (backupResult.success) {
-        this.log('info', 'Successfully restored from backup after load failure');
-        return backupResult;
+      // Try to restore from backup for certain types of errors
+      if (classification.recoverable && classification.type === 'corruption') {
+        const backupResult = await this.restoreFromBackup();
+        if (backupResult.success) {
+          this.log('info', 'Successfully restored from backup after load failure');
+          return backupResult;
+        }
       }
 
-      this.eventEmitter.emit('error', { operation: 'load', error: error.message });
-      return StorageResult.failure(`Failed to load data: ${error.message}`);
+      this.eventEmitter.emit('error', {
+        operation: 'load',
+        error: error.message,
+        classification
+      });
+
+      return StorageErrorHandler.createErrorResult(classification, {
+        count: 0,
+        duration: Date.now() - startTime
+      });
     }
   }
 
@@ -152,6 +179,12 @@ class JsonFileStorage extends StorageInterface {
         });
 
       } catch (error) {
+        const classification = StorageErrorHandler.classifyError(error, 'save', {
+          dataFile: this.dataFile,
+          attempt,
+          maxRetries: this.config.options.maxRetries
+        });
+
         this.log('error', `Save attempt ${attempt} failed: ${error.message}`);
 
         // Cleanup temp file if it exists
@@ -163,17 +196,28 @@ class JsonFileStorage extends StorageInterface {
           }
         }
 
-        // Retry logic
-        if (attempt <= this.config.options.maxRetries) {
-          const delay = this.config.options.retryDelay * attempt;
-          this.log('warn', `Retrying save in ${delay}ms (attempt ${attempt}/${this.config.options.maxRetries})`);
+        // Enhanced retry logic based on error classification
+        const shouldRetry = attempt <= this.config.options.maxRetries &&
+                           (StorageErrorHandler.isRetryable(classification) ||
+                            classification.recoverable);
+
+        if (shouldRetry) {
+          const delay = StorageErrorHandler.getRetryDelay(classification, attempt);
+          this.log('warn', `Retrying save in ${delay}ms (attempt ${attempt}/${this.config.options.maxRetries}) - ${classification.type}`);
 
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
-          this.eventEmitter.emit('error', { operation: 'save', error: error.message, attempts: attempt - 1 });
-          return StorageResult.failure(error.message, {
+          this.eventEmitter.emit('error', {
+            operation: 'save',
+            error: error.message,
             attempts: attempt - 1,
-            duration: Date.now() - startTime
+            classification
+          });
+
+          return StorageErrorHandler.createErrorResult(classification, {
+            attempts: attempt - 1,
+            duration: Date.now() - startTime,
+            count: todos.length
           });
         }
       }

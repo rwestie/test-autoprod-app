@@ -76,7 +76,7 @@ class TodoCoreEnhanced {
       // Initialize storage backend
       const initResult = await this.storage.initialize();
       if (!initResult.success) {
-        throw new Error(initResult.error);
+        return initResult; // Return the storage error result directly
       }
 
       // Load existing todos with migration support
@@ -105,6 +105,11 @@ class TodoCoreEnhanced {
 
         this.nextId = this.getNextId();
       } else {
+        // If load failed due to storage error and it's not recoverable, return the error
+        if (loadResult.errorDetails && loadResult.errorDetails.severity === 'critical') {
+          return loadResult;
+        }
+
         this.log('warn', `Failed to load data: ${loadResult.error}`);
         this.todos = [];
         this.nextId = 1;
@@ -113,11 +118,26 @@ class TodoCoreEnhanced {
       this.isInitialized = true;
       this.log('info', `TodoCore initialized with ${this.todos.length} todos using ${this.storageType} storage`);
 
+      // Return success result
+      return {
+        success: true,
+        message: `Initialized with ${this.todos.length} todos`,
+        todoCount: this.todos.length,
+        storageType: this.storageType
+      };
+
     } catch (error) {
       this.log('error', `Failed to initialize TodoCore: ${error.message}`);
       this.todos = [];
       this.nextId = 1;
       this.isInitialized = false;
+
+      // Return error result
+      return {
+        success: false,
+        error: error.message,
+        errorDetails: error.errorDetails || null
+      };
     }
   }
 
