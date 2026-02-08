@@ -29,9 +29,9 @@ function cleanup() {
 }
 
 // Helper function to run tests
-function runTest(testName, testFn) {
+async function runTest(testName, testFn) {
   try {
-    testFn();
+    await testFn();
     console.log(`✓ ${testName}`);
   } catch (error) {
     console.error(`✗ ${testName}: ${error.message}`);
@@ -47,14 +47,14 @@ async function createTestTodoCore(filename = 'test-todos.json') {
     dataFile: filename,
     enableLogging: false // Disable logging for cleaner test output
   });
-  const todoCore = new TodoCoreEnhanced(config);
-  await todoCore.ensureInitialized();
+  const todoCore = new TodoCoreEnhanced(config, null, 'json-file');
+  await todoCore.initialize();
   return todoCore;
 }
 
-try {
+async function runAllTests() {
   // Test 1: Basic single todo deletion
-  runTest("Basic single todo deletion", async () => {
+  await runTest("Basic single todo deletion", async () => {
     const todoCore = await createTestTodoCore('delete-basic.json');
 
     // Add test todos
@@ -81,7 +81,7 @@ try {
   });
 
   // Test 2: Delete validation and error handling
-  runTest("Delete validation and error handling", async () => {
+  await runTest("Delete validation and error handling", async () => {
     const todoCore = await createTestTodoCore('delete-validation.json');
 
     await todoCore.addTodo("Test todo");
@@ -108,7 +108,7 @@ try {
   });
 
   // Test 3: Delete with storage failure recovery
-  runTest("Delete with storage failure recovery", async () => {
+  await runTest("Delete with storage failure recovery", async () => {
     const todoCore = await createTestTodoCore('delete-recovery.json');
 
     await todoCore.addTodo("Todo to delete");
@@ -124,7 +124,7 @@ try {
 
     const deleteResult = await todoCore.deleteTodo(1);
     assert(!deleteResult.success, "Delete should fail due to storage error");
-    assert(deleteResult.error.includes("Failed to save"), "Should have storage error message");
+    assert(deleteResult.error.includes("Mock storage failure"), "Should have storage error message");
     assert(!deleteResult.storage.saved, "Storage should confirm failure");
 
     // Verify todo was rolled back and still exists
@@ -143,7 +143,7 @@ try {
   });
 
   // Test 4: Delete completed vs pending todos
-  runTest("Delete completed vs pending todos", async () => {
+  await runTest("Delete completed vs pending todos", async () => {
     const todoCore = await createTestTodoCore('delete-status.json');
 
     // Add todos with different statuses
@@ -173,7 +173,7 @@ try {
   });
 
   // Test 5: Delete todos with enhanced metadata
-  runTest("Delete todos with enhanced metadata", async () => {
+  await runTest("Delete todos with enhanced metadata", async () => {
     const todoCore = await createTestTodoCore('delete-metadata.json');
 
     // Add todo with rich metadata
@@ -198,7 +198,7 @@ try {
   });
 
   // Test 6: Bulk delete - clean completed todos (preparation for implementation)
-  runTest("Bulk delete preparation - clean completed", async () => {
+  await runTest("Bulk delete preparation - clean completed", async () => {
     const todoCore = await createTestTodoCore('bulk-clean.json');
 
     // Add mixed todos
@@ -240,7 +240,7 @@ try {
   });
 
   // Test 7: Bulk delete - clear all todos (preparation for implementation)
-  runTest("Bulk delete preparation - clear all", async () => {
+  await runTest("Bulk delete preparation - clear all", async () => {
     const todoCore = await createTestTodoCore('bulk-clear.json');
 
     // Add various todos
@@ -277,7 +277,7 @@ try {
   });
 
   // Test 8: Delete with backup verification
-  runTest("Delete with backup verification", async () => {
+  await runTest("Delete with backup verification", async () => {
     const todoCore = await createTestTodoCore('delete-backup.json');
 
     await todoCore.addTodo("Todo before backup");
@@ -301,7 +301,7 @@ try {
   });
 
   // Test 9: Delete performance with many todos
-  runTest("Delete performance with many todos", async () => {
+  await runTest("Delete performance with many todos", async () => {
     const todoCore = await createTestTodoCore('delete-performance.json');
 
     // Add many todos
@@ -344,7 +344,7 @@ try {
   });
 
   // Test 10: Delete edge cases
-  runTest("Delete edge cases", async () => {
+  await runTest("Delete edge cases", async () => {
     const todoCore = await createTestTodoCore('delete-edge-cases.json');
 
     // Test deleting from empty list
@@ -370,7 +370,7 @@ try {
   });
 
   // Test 11: Delete with concurrent operations simulation
-  runTest("Delete with concurrent operations", async () => {
+  await runTest("Delete with concurrent operations", async () => {
     const todoCore = await createTestTodoCore('delete-concurrent.json');
 
     // Add test todos
@@ -402,11 +402,17 @@ try {
 
   console.log("\n🎉 All comprehensive delete functionality tests passed!");
   console.log("🔧 Note: Some bulk delete operations tested as preparation for implementation");
-
-} catch (error) {
-  console.error("❌ Delete functionality test failed:", error.message);
-  console.error(error.stack);
-  process.exit(1);
-} finally {
-  cleanup();
 }
+
+runAllTests()
+  .then(() => {
+    console.log("All tests completed successfully");
+  })
+  .catch((error) => {
+    console.error("❌ Delete functionality test failed:", error.message);
+    console.error(error.stack);
+    process.exit(1);
+  })
+  .finally(() => {
+    cleanup();
+  });
