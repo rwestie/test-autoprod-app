@@ -56,6 +56,11 @@ class DeleteCommandInterface {
         return this.handleParseError(parseResult);
       }
 
+      // Handle help requests
+      if (parseResult.type === 'help') {
+        return this.handleHelpRequest(parseResult);
+      }
+
       // Get the appropriate handler based on command type
       const handler = this.handlers.get(parseResult.parsed.type);
       if (!handler) {
@@ -167,6 +172,49 @@ class DeleteCommandInterface {
   }
 
   /**
+   * Handle help requests from delete commands
+   * @param {Object} helpResult - Help result from parser
+   */
+  async handleHelpRequest(helpResult) {
+    const help = helpResult.helpContent;
+
+    console.log(`🗑️  ${help.title.toUpperCase()}`);
+    console.log('='.repeat(help.title.length + 5));
+    console.log('');
+    console.log(help.description);
+    console.log('');
+
+    if (help.usage && help.usage.length > 0) {
+      console.log('📖 USAGE:');
+      help.usage.forEach(usage => {
+        console.log(`  ${usage}`);
+      });
+      console.log('');
+    }
+
+    if (help.examples && help.examples.length > 0) {
+      console.log('💡 EXAMPLES:');
+      help.examples.forEach(example => {
+        console.log(`  ${example}`);
+      });
+      console.log('');
+    }
+
+    if (help.aliases && help.aliases.length > 0) {
+      console.log(`🔗 ALIASES: ${help.aliases.join(', ')}`);
+      console.log('');
+    }
+
+    console.log('📚 MORE HELP:');
+    console.log('  node index.js help                      - Show all commands');
+    console.log('  node index.js help delete               - Single delete help');
+    console.log('  node index.js help batch-delete         - Batch delete help');
+    console.log('  node index.js list                      - View current todos');
+
+    return { success: true, type: 'help', command: helpResult.command };
+  }
+
+  /**
    * Handle parsing errors from the new parser
    */
   async handleParseError(parseResult) {
@@ -197,6 +245,14 @@ class DeleteCommandInterface {
       console.log('📝 EXAMPLES:');
       details.examples.forEach(example => {
         console.log(`  ${example}`);
+      });
+      console.log('');
+    }
+
+    if (details.contextualSuggestions && details.contextualSuggestions.length > 0) {
+      console.log('💭 CONTEXTUAL SUGGESTIONS:');
+      details.contextualSuggestions.forEach(suggestion => {
+        console.log(`  ${suggestion}`);
       });
       console.log('');
     }

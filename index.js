@@ -1871,30 +1871,58 @@ function validateCommand(parsed) {
       break;
 
     case 'delete':
+      // Enhanced delete command validation is handled by the DeleteCommandInterface
+      // Allow enhanced syntax to pass through to the enhanced parser
       if (!parsed.identifier) {
+        // Only fail if it's clearly not a help case or enhanced syntax
         console.error(`❌ Error: Delete command requires a ${parsed.useIndex ? 'position' : 'todo ID'}`);
         console.error('💡 Use "node index.js help delete" for detailed guidance.');
         return false;
       }
-      if (isNaN(parseInt(parsed.identifier))) {
-        console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: "${parsed.identifier}"`);
-        console.error(`💡 Use positive numbers only. Get help: node index.js help delete`);
-        return false;
+
+      // Allow help flags and enhanced syntax patterns to pass through
+      if (parsed.identifier) {
+        const isHelpFlag = ['--help', '-h', 'help'].includes(parsed.identifier.toLowerCase());
+        const isEnhancedSyntax = /[,\-]/.test(parsed.identifier);
+
+        if (!isHelpFlag && !isEnhancedSyntax) {
+          // Only validate simple cases - enhanced parser handles complex validation
+          if (isNaN(parseInt(parsed.identifier))) {
+            console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: "${parsed.identifier}"`);
+            console.error(`💡 Use positive numbers only. Get help: node index.js help delete`);
+            return false;
+          }
+        }
       }
       break;
 
     case 'batch-delete':
+      // Enhanced batch delete validation is handled by the DeleteCommandInterface
+      // Allow enhanced syntax to pass through to the enhanced parser
       if (!parsed.identifiers || parsed.identifiers.length === 0) {
         console.error(`❌ Error: Batch delete requires at least one ${parsed.useIndex ? 'position' : 'todo ID'}`);
         console.error('💡 Use "node index.js help batch-delete" for detailed guidance.');
         return false;
       }
-      // Check if identifiers are valid numbers
-      const invalidIds = parsed.identifiers.filter(id => isNaN(parseInt(id)));
-      if (invalidIds.length > 0) {
-        console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: ${invalidIds.join(', ')}`);
-        console.error(`💡 Use positive numbers only. Get help: node index.js help batch-delete`);
-        return false;
+
+      // Allow help flags and enhanced syntax to pass through
+      if (parsed.identifiers && parsed.identifiers.length > 0) {
+        const hasHelpFlag = parsed.identifiers.some(id => ['--help', '-h', 'help'].includes(String(id).toLowerCase()));
+
+        if (!hasHelpFlag) {
+          // Only validate obviously invalid cases - enhanced parser handles complex validation
+          const obviouslyInvalidIds = parsed.identifiers.filter(id =>
+            typeof id === 'string' &&
+            isNaN(parseInt(id)) &&
+            !/[,\-]/.test(id) &&
+            !/^[a-zA-Z]+$/.test(id) // Allow word-based inputs for enhanced parser
+          );
+          if (obviouslyInvalidIds.length > 0) {
+            console.error(`❌ Error: Invalid ${parsed.useIndex ? 'position' : 'ID'} format: ${obviouslyInvalidIds.join(', ')}`);
+            console.error(`💡 Use positive numbers only. Get help: node index.js help batch-delete`);
+            return false;
+          }
+        }
       }
       break;
 
