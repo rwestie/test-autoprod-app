@@ -1,33 +1,282 @@
 const fs = require('fs');
+const path = require('path');
 
 class TodoCore {
   constructor(dataFile = './todos.json') {
     this.dataFile = dataFile;
     this.undoHistoryFile = dataFile.replace('.json', '.undo.json');
+    this.backupDir = path.join(path.dirname(dataFile), '.todo-backups');
+    this.lockFile = dataFile + '.lock';
     this.todos = this.loadTodos();
     this.nextId = this.getNextId();
     this.undoHistory = this.loadUndoHistory(); // History of delete operations for undo functionality
     this.maxUndoHistory = 10; // Maximum number of operations to keep in history
+
+    // Ensure backup directory exists
+    this.ensureBackupDirectory();
   }
 
   loadTodos() {
     try {
       if (fs.existsSync(this.dataFile)) {
         const data = fs.readFileSync(this.dataFile, 'utf8');
-        return JSON.parse(data);
+        const todos = JSON.parse(data);
+
+        // Validate data integrity on load
+        this.validateTodoData(todos);
+        return todos;
       }
     } catch (error) {
       console.error('Error loading todos:', error.message);
+
+      // Try to recover from backup
+      const recoveredData = this.recoverFromBackup();
+      if (recoveredData) {
+        console.log('Successfully recovered todo data from backup');
+        return recoveredData;
+      }
     }
     return [];
   }
 
+  // Ensure backup directory exists
+  ensureBackupDirectory() {
+    try {
+      if (!fs.existsSync(this.backupDir)) {
+        fs.mkdirSync(this.backupDir, { recursive: true });
+      }
+    } catch (error) {
+      console.error('Warning: Could not create backup directory:', error.message);
+    }
+  }
+
+  // Create a backup of the current data before destructive operations
+  createBackup(operation = 'unknown') {
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupFile = path.join(this.backupDir, `todos-${operation}-${timestamp}.json`);
+
+      if (fs.existsSync(this.dataFile)) {
+        fs.copyFileSync(this.dataFile, backupFile);
+      }
+
+      // Also backup undo history
+      const undoBackupFile = path.join(this.backupDir, `undo-${operation}-${timestamp}.json`);
+      if (fs.existsSync(this.undoHistoryFile)) {
+        fs.copyFileSync(this.undoHistoryFile, undoBackupFile);
+      }
+
+      // Clean up old backups (keep only last 5)
+      this.cleanupOldBackups();
+
+      return backupFile;
+    } catch (error) {
+      console.error('Warning: Could not create backup:', error.message);
+      return null;
+    }
+  }
+
+  // Clean up old backup files
+  cleanupOldBackups() {
+    try {
+      const files = fs.readdirSync(this.backupDir);
+      const todoBackups = files.filter(f => f.startsWith('todos-')).sort();
+      const undoBackups = files.filter(f => f.startsWith('undo-')).sort();
+
+      // Keep only last 5 of each type
+      while (todoBackups.length > 5) {
+        const oldFile = todoBackups.shift();
+        fs.unlinkSync(path.join(this.backupDir, oldFile));
+      }
+
+      while (undoBackups.length > 5) {
+        const oldFile = undoBackups.shift();
+        fs.unlinkSync(path.join(this.backupDir, oldFile));
+      }
+    } catch (error) {
+      // Ignore cleanup errors
+    }
+  }
+
+  // Recover data from the most recent backup
+  recoverFromBackup() {
+    try {
+      if (!fs.existsSync(this.backupDir)) {
+        return null;
+      }
+
+      const files = fs.readdirSync(this.backupDir);
+      const todoBackups = files
+        .filter(f => f.startsWith('todos-') && f.endsWith('.json'))
+        .sort()
+        .reverse(); // Get newest first
+
+      for (const backupFile of todoBackups) {
+        try {
+          const backupPath = path.join(this.backupDir, backupFile);
+          const data = fs.readFileSync(backupPath, 'utf8');
+          const todos = JSON.parse(data);
+
+          // Validate the backup data
+          this.validateTodoData(todos);
+
+          // Copy backup to main file
+          fs.writeFileSync(this.dataFile, data);
+
+          console.log(`Recovered data from backup: ${backupFile}`);
+          return todos;
+
+        } catch (backupError) {
+          console.error(`Backup file ${backupFile} is corrupted, trying next...`);
+          continue;
+        }
+      }
+
+    } catch (error) {
+      console.error('Error during backup recovery:', error.message);
+    }
+
+    return null;
+  }
+
+  // Check and repair data integrity
+  repairDataIntegrity() {
+    try {
+      // Remove any invalid todos
+      const validTodos = [];
+      const seenIds = new Set();
+
+      for (const todo of this.todos) {
+        try {
+          // Check required fields and fix if possible
+          if (typeof todo.id !== 'number' || todo.id <= 0) {
+            console.warn(`Skipping todo with invalid ID: ${todo.id}`);
+            continue;
+          }
+
+          if (typeof todo.description !== 'string') {
+            console.warn(`Skipping todo ${todo.id} with invalid description`);
+            continue;
+          }
+
+          if (typeof todo.completed !== 'boolean') {
+            // Try to fix
+            todo.completed = Boolean(todo.completed);
+          }
+
+          if (!todo.createdAt) {
+            // Add missing timestamp
+            todo.createdAt = new Date().toISOString();
+          } else if (isNaN(new Date(todo.createdAt).getTime())) {
+            // Fix invalid timestamp
+            todo.createdAt = new Date().toISOString();
+          }
+
+          // Check for duplicate IDs
+          if (seenIds.has(todo.id)) {
+            console.warn(`Duplicate ID ${todo.id} found, assigning new ID`);
+            todo.id = this.getNextAvailableId(seenIds);
+          }
+
+          seenIds.add(todo.id);
+          validTodos.push(todo);
+
+        } catch (todoError) {
+          console.warn(`Skipping corrupted todo: ${todoError.message}`);
+        }
+      }
+
+      // Update todos with repaired data
+      this.todos = validTodos;
+      this.nextId = this.getNextId();
+
+      // Save repaired data
+      if (validTodos.length !== this.todos.length) {
+        console.log(`Data integrity repair completed: ${validTodos.length} todos retained`);
+        this.saveTodos();
+      }
+
+      return true;
+
+    } catch (error) {
+      console.error('Error during data repair:', error.message);
+      return false;
+    }
+  }
+
+  // Get next available ID that's not in the seen set
+  getNextAvailableId(seenIds) {
+    let id = Math.max(...Array.from(seenIds), 0) + 1;
+    while (seenIds.has(id)) {
+      id++;
+    }
+    return id;
+  }
+
+  // Validate todo data structure
+  validateTodoData(todos = this.todos) {
+    if (!Array.isArray(todos)) {
+      throw new Error('Todo data must be an array');
+    }
+
+    const seenIds = new Set();
+    for (const todo of todos) {
+      // Check required fields
+      if (typeof todo.id !== 'number' || todo.id <= 0) {
+        throw new Error(`Invalid todo ID: ${todo.id}`);
+      }
+
+      if (typeof todo.description !== 'string' || todo.description.trim().length === 0) {
+        throw new Error(`Invalid todo description for ID ${todo.id}`);
+      }
+
+      if (typeof todo.completed !== 'boolean') {
+        throw new Error(`Invalid completed status for todo ID ${todo.id}`);
+      }
+
+      if (!todo.createdAt || isNaN(new Date(todo.createdAt).getTime())) {
+        throw new Error(`Invalid createdAt date for todo ID ${todo.id}`);
+      }
+
+      // Check for duplicate IDs
+      if (seenIds.has(todo.id)) {
+        throw new Error(`Duplicate todo ID found: ${todo.id}`);
+      }
+      seenIds.add(todo.id);
+    }
+
+    return true;
+  }
+
+  // Atomic save operation with validation and rollback capability
   saveTodos() {
     try {
-      fs.writeFileSync(this.dataFile, JSON.stringify(this.todos, null, 2));
+      // Validate data before saving
+      this.validateTodoData();
+
+      // Create atomic write by writing to temp file first
+      const tempFile = this.dataFile + '.tmp';
+      const dataToSave = JSON.stringify(this.todos, null, 2);
+
+      fs.writeFileSync(tempFile, dataToSave);
+
+      // Atomically replace the original file
+      fs.renameSync(tempFile, this.dataFile);
+
       return true;
     } catch (error) {
       console.error('Error saving todos:', error.message);
+
+      // Clean up temp file if it exists
+      const tempFile = this.dataFile + '.tmp';
+      try {
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
+
       return false;
     }
   }
@@ -44,12 +293,32 @@ class TodoCore {
     return [];
   }
 
+  // Atomic save operation for undo history
   saveUndoHistory() {
     try {
-      fs.writeFileSync(this.undoHistoryFile, JSON.stringify(this.undoHistory, null, 2));
+      // Create atomic write by writing to temp file first
+      const tempFile = this.undoHistoryFile + '.tmp';
+      const dataToSave = JSON.stringify(this.undoHistory, null, 2);
+
+      fs.writeFileSync(tempFile, dataToSave);
+
+      // Atomically replace the original file
+      fs.renameSync(tempFile, this.undoHistoryFile);
+
       return true;
     } catch (error) {
       console.error('Error saving undo history:', error.message);
+
+      // Clean up temp file if it exists
+      const tempFile = this.undoHistoryFile + '.tmp';
+      try {
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
+
       return false;
     }
   }
@@ -86,40 +355,59 @@ class TodoCore {
     this.saveUndoHistory();
   }
 
-  // Undo the last delete operation
+  // Undo the last delete operation with transaction-like behavior
   undoLastDelete() {
     if (this.undoHistory.length === 0) {
       return { success: false, error: 'No delete operations to undo' };
     }
 
-    const lastOperation = this.undoHistory.pop();
+    // Create backup before undo operation
+    const backupFile = this.createBackup('undo');
 
-    // Restore deleted todos
-    const restoredTodos = lastOperation.deletedTodos;
-    const conflictingIds = [];
-    const restoredSuccessfully = [];
+    // Store original state for rollback
+    const originalTodos = [...this.todos];
+    const originalUndoHistory = [...this.undoHistory];
+    const originalNextId = this.nextId;
 
-    for (const todo of restoredTodos) {
-      // Check if a todo with this ID already exists
-      if (this.todos.find(t => t.id === todo.id)) {
-        conflictingIds.push(todo.id);
-      } else {
-        this.todos.push(todo);
-        restoredSuccessfully.push(todo);
+    try {
+      const lastOperation = originalUndoHistory.pop();
+
+      // Restore deleted todos
+      const restoredTodos = lastOperation.deletedTodos;
+      const conflictingIds = [];
+      const restoredSuccessfully = [];
+
+      for (const todo of restoredTodos) {
+        // Check if a todo with this ID already exists
+        if (this.todos.find(t => t.id === todo.id)) {
+          conflictingIds.push(todo.id);
+        } else {
+          this.todos.push(todo);
+          restoredSuccessfully.push(todo);
+        }
       }
-    }
 
-    // Sort todos by ID to maintain order
-    this.todos.sort((a, b) => a.id - b.id);
+      // Sort todos by ID to maintain order
+      this.todos.sort((a, b) => a.id - b.id);
 
-    // Update nextId if necessary
-    if (this.todos.length > 0) {
-      this.nextId = Math.max(this.nextId, ...this.todos.map(t => t.id)) + 1;
-    }
+      // Update nextId if necessary
+      if (this.todos.length > 0) {
+        this.nextId = Math.max(this.nextId, ...this.todos.map(t => t.id)) + 1;
+      }
 
-    if (this.saveTodos()) {
-      // Save undo history (operation was removed from history)
-      this.saveUndoHistory();
+      // Validate data integrity
+      this.validateTodoData();
+
+      // Save todos with atomic operation
+      if (!this.saveTodos()) {
+        throw new Error('Failed to save restored todos');
+      }
+
+      // Update undo history (operation was removed from history)
+      this.undoHistory = originalUndoHistory.slice(0, -1);
+      if (!this.saveUndoHistory()) {
+        throw new Error('Failed to save undo history');
+      }
 
       return {
         success: true,
@@ -129,13 +417,26 @@ class TodoCore {
         conflictingIds: conflictingIds.length > 0 ? conflictingIds : undefined,
         totalCount: this.todos.length
       };
-    } else {
-      // If save fails, restore the undo history
-      this.undoHistory.push(lastOperation);
-      this.saveUndoHistory();
-      // Reload todos to restore original state
-      this.todos = this.loadTodos();
-      return { success: false, error: 'Failed to save restored todos' };
+
+    } catch (error) {
+      // Rollback on any error
+      this.todos = originalTodos;
+      this.undoHistory = originalUndoHistory;
+      this.nextId = originalNextId;
+
+      // Try to restore from backup if needed
+      if (backupFile && fs.existsSync(backupFile)) {
+        try {
+          const backupData = fs.readFileSync(backupFile, 'utf8');
+          const backupTodos = JSON.parse(backupData);
+          this.validateTodoData(backupTodos);
+          fs.writeFileSync(this.dataFile, backupData);
+        } catch (restoreError) {
+          console.error('Warning: Could not restore from backup:', restoreError.message);
+        }
+      }
+
+      return { success: false, error: error.message || 'Failed to complete undo operation' };
     }
   }
 
@@ -189,6 +490,54 @@ class TodoCore {
     }
   }
 
+  // Execute a deletion operation with full transaction-like behavior
+  executeDeleteOperation(operationType, deleteFn, undoData) {
+    // Create backup before destructive operation
+    const backupFile = this.createBackup(operationType);
+
+    // Store original state for rollback
+    const originalTodos = [...this.todos];
+    const originalUndoHistory = [...this.undoHistory];
+
+    try {
+      // Execute the delete function
+      const result = deleteFn();
+
+      if (!result.success) {
+        return result;
+      }
+
+      // Save todos with validation
+      if (!this.saveTodos()) {
+        throw new Error('Failed to save todos');
+      }
+
+      // Add to undo history
+      this.addToUndoHistory(undoData);
+
+      return result;
+
+    } catch (error) {
+      // Rollback on any error
+      this.todos = originalTodos;
+      this.undoHistory = originalUndoHistory;
+
+      // Try to restore from backup if needed
+      if (backupFile && fs.existsSync(backupFile)) {
+        try {
+          const backupData = fs.readFileSync(backupFile, 'utf8');
+          const backupTodos = JSON.parse(backupData);
+          this.validateTodoData(backupTodos);
+          fs.writeFileSync(this.dataFile, backupData);
+        } catch (restoreError) {
+          console.error('Warning: Could not restore from backup:', restoreError.message);
+        }
+      }
+
+      return { success: false, error: error.message || 'Failed to complete delete operation' };
+    }
+  }
+
   deleteTodo(id) {
     const numId = parseInt(id);
     if (isNaN(numId)) {
@@ -201,20 +550,20 @@ class TodoCore {
     }
 
     const todo = this.todos[todoIndex];
-    this.todos.splice(todoIndex, 1);
 
-    if (this.saveTodos()) {
-      // Add to undo history
-      this.addToUndoHistory({
+    // Use transaction-like operation
+    return this.executeDeleteOperation(
+      'single-delete',
+      () => {
+        this.todos.splice(todoIndex, 1);
+        return { success: true, todo };
+      },
+      {
         type: 'single-delete',
         deletedTodos: [{ ...todo }],
         deletedCount: 1
-      });
-
-      return { success: true, todo };
-    } else {
-      return { success: false, error: 'Failed to save todo' };
-    }
+      }
+    );
   }
 
   bulkDeleteTodos(ids) {
@@ -257,31 +606,29 @@ class TodoCore {
       return { success: false, error: `No todos found with IDs: ${numIds.join(', ')}` };
     }
 
-    // Remove todos from the list
-    this.todos = this.todos.filter(todo => !numIds.includes(todo.id));
+    // Use transaction-like operation
+    return this.executeDeleteOperation(
+      'bulk-delete-ids',
+      () => {
+        // Remove todos from the list
+        this.todos = this.todos.filter(todo => !numIds.includes(todo.id));
 
-    if (this.saveTodos()) {
-      // Add to undo history
-      this.addToUndoHistory({
+        return {
+          success: true,
+          deletedTodos,
+          deletedCount: deletedTodos.length,
+          notFoundIds: notFoundIds.length > 0 ? notFoundIds : undefined,
+          originalCount: originalTodosLength,
+          remainingCount: this.todos.length
+        };
+      },
+      {
         type: 'bulk-delete-ids',
         deletedTodos: deletedTodos.map(todo => ({ ...todo })),
         deletedCount: deletedTodos.length,
         originalIds: numIds
-      });
-
-      return {
-        success: true,
-        deletedTodos,
-        deletedCount: deletedTodos.length,
-        notFoundIds: notFoundIds.length > 0 ? notFoundIds : undefined,
-        originalCount: originalTodosLength,
-        remainingCount: this.todos.length
-      };
-    } else {
-      // Restore todos if saving failed
-      this.todos = this.loadTodos();
-      return { success: false, error: 'Failed to save changes' };
-    }
+      }
+    );
   }
 
   bulkDeleteCompleted() {
@@ -293,29 +640,27 @@ class TodoCore {
 
     const originalTodosLength = this.todos.length;
 
-    // Remove completed todos
-    this.todos = this.todos.filter(todo => !todo.completed);
+    // Use transaction-like operation
+    return this.executeDeleteOperation(
+      'bulk-delete-completed',
+      () => {
+        // Remove completed todos
+        this.todos = this.todos.filter(todo => !todo.completed);
 
-    if (this.saveTodos()) {
-      // Add to undo history
-      this.addToUndoHistory({
+        return {
+          success: true,
+          deletedTodos: completedTodos,
+          deletedCount: completedTodos.length,
+          originalCount: originalTodosLength,
+          remainingCount: this.todos.length
+        };
+      },
+      {
         type: 'bulk-delete-completed',
         deletedTodos: completedTodos.map(todo => ({ ...todo })),
         deletedCount: completedTodos.length
-      });
-
-      return {
-        success: true,
-        deletedTodos: completedTodos,
-        deletedCount: completedTodos.length,
-        originalCount: originalTodosLength,
-        remainingCount: this.todos.length
-      };
-    } else {
-      // Restore todos if saving failed
-      this.todos = this.loadTodos();
-      return { success: false, error: 'Failed to save changes' };
-    }
+      }
+    );
   }
 
   bulkDeleteAll() {
@@ -327,29 +672,27 @@ class TodoCore {
 
     const originalTodosLength = this.todos.length;
 
-    // Clear all todos
-    this.todos = [];
+    // Use transaction-like operation
+    return this.executeDeleteOperation(
+      'bulk-delete-all',
+      () => {
+        // Clear all todos
+        this.todos = [];
 
-    if (this.saveTodos()) {
-      // Add to undo history
-      this.addToUndoHistory({
+        return {
+          success: true,
+          deletedTodos: allTodos,
+          deletedCount: allTodos.length,
+          originalCount: originalTodosLength,
+          remainingCount: 0
+        };
+      },
+      {
         type: 'bulk-delete-all',
         deletedTodos: allTodos.map(todo => ({ ...todo })),
         deletedCount: allTodos.length
-      });
-
-      return {
-        success: true,
-        deletedTodos: allTodos,
-        deletedCount: allTodos.length,
-        originalCount: originalTodosLength,
-        remainingCount: 0
-      };
-    } else {
-      // Restore todos if saving failed
-      this.todos = this.loadTodos();
-      return { success: false, error: 'Failed to save changes' };
-    }
+      }
+    );
   }
 }
 
