@@ -1,9 +1,26 @@
 #!/usr/bin/env node
 
 const { TodoCore } = require('./todo-core');
+const readline = require('readline');
 
 // Create a TodoCore instance for the CLI
 const todoCore = new TodoCore();
+
+// Helper function to get user confirmation
+function getUserConfirmation(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      const normalizedAnswer = answer.toLowerCase().trim();
+      resolve(normalizedAnswer === 'y' || normalizedAnswer === 'yes');
+    });
+  });
+}
 
 // Add a new todo
 function addTodo(description) {
@@ -52,7 +69,48 @@ function completeTodo(id) {
 }
 
 // Delete a todo
-function deleteTodo(id) {
+async function deleteTodo(id) {
+  // First, validate that the todo exists and get its details
+  const numId = parseInt(id);
+  if (isNaN(numId)) {
+    console.error('❌ Error: Invalid ID format');
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  const todos = todoCore.listTodos();
+  const todo = todos.find(t => t.id === numId);
+
+  if (!todo) {
+    console.error(`❌ Error: Todo with ID ${numId} not found`);
+    console.error('💡 Use "node index.js list" to see available todos');
+    return false;
+  }
+
+  // Show todo details before asking for confirmation
+  const status = todo.completed ? '✓' : ' ';
+  console.log('🗑️  You are about to delete the following todo:');
+  console.log('');
+  console.log(`   ID: #${todo.id}`);
+  console.log(`   Description: ${todo.description}`);
+  console.log(`   Status: [${status}] ${todo.completed ? 'Completed' : 'Pending'}`);
+  if (todo.createdAt) {
+    console.log(`   Created: ${new Date(todo.createdAt).toLocaleString()}`);
+  }
+  if (todo.completedAt) {
+    console.log(`   Completed: ${new Date(todo.completedAt).toLocaleString()}`);
+  }
+  console.log('');
+
+  // Ask for confirmation
+  const confirmed = await getUserConfirmation('❓ Are you sure you want to delete this todo? This cannot be undone. (y/N): ');
+
+  if (!confirmed) {
+    console.log('✅ Delete operation cancelled. Todo was not deleted.');
+    return true; // Return true because this is not an error, user chose to cancel
+  }
+
+  // Proceed with deletion
   const result = todoCore.deleteTodo(id);
 
   if (!result.success) {
@@ -61,7 +119,6 @@ function deleteTodo(id) {
     return false;
   }
 
-  const status = result.todo.completed ? '✓' : ' ';
   console.log(`🗑️  Successfully deleted todo #${result.todo.id}: ${result.todo.description}`);
   console.log(`   Status was: [${status}] ${result.todo.completed ? 'Completed' : 'Pending'}`);
 
@@ -286,7 +343,7 @@ function validateCommand(parsed) {
 }
 
 // Main function
-function main() {
+async function main() {
   const parsed = parseArguments();
 
   if (!validateCommand(parsed)) {
@@ -306,7 +363,7 @@ function main() {
       success = completeTodo(parsed.id);
       break;
     case 'delete':
-      success = deleteTodo(parsed.id);
+      success = await deleteTodo(parsed.id);
       break;
     case 'help':
       if (parsed.subcommand) {
@@ -324,5 +381,8 @@ function main() {
 
 // Run the app
 if (require.main === module) {
-  main();
+  main().catch((error) => {
+    console.error('An unexpected error occurred:', error);
+    process.exit(1);
+  });
 }
