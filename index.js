@@ -719,7 +719,7 @@ function parseArguments() {
     case 'delete':
     case 'remove':
     case 'rm':
-      return { command: 'delete', id: args[1] };
+      return parseDeleteCommand(args);
     case 'bulk-delete':
     case 'bulk-remove':
     case 'bulk-rm':
@@ -737,6 +737,130 @@ function parseArguments() {
     default:
       return { command: 'unknown', original: command };
   }
+}
+
+// Parse delete command with enhanced validation
+function parseDeleteCommand(args) {
+  // Check if no ID was provided
+  if (args.length < 2) {
+    return {
+      command: 'delete',
+      error: 'Delete command requires a todo ID',
+      id: null
+    };
+  }
+
+  // Check if too many arguments were provided
+  if (args.length > 2) {
+    return {
+      command: 'delete',
+      error: `Too many arguments provided. Expected 1 ID, got ${args.length - 1}`,
+      extraArgs: args.slice(2),
+      id: args[1]
+    };
+  }
+
+  const rawId = args[1];
+
+  // Check for empty string or just whitespace
+  if (!rawId || rawId.trim().length === 0) {
+    return {
+      command: 'delete',
+      error: 'Todo ID cannot be empty',
+      id: rawId
+    };
+  }
+
+  const trimmedId = rawId.trim();
+
+  // Check for letters first
+  if (trimmedId.match(/[a-zA-Z]/)) {
+    return {
+      command: 'delete',
+      error: 'Todo ID cannot contain letters',
+      id: rawId
+    };
+  }
+
+  // Check for decimal numbers (before special character check)
+  if (trimmedId.includes('.')) {
+    return {
+      command: 'delete',
+      error: 'Todo ID must be a whole number (no decimal points)',
+      id: rawId
+    };
+  }
+
+  // Check for negative sign (before special character check)
+  if (trimmedId.startsWith('-')) {
+    return {
+      command: 'delete',
+      error: 'Todo ID must be a positive number',
+      id: rawId
+    };
+  }
+
+  // Check for other special characters (excluding . and - which we handled above)
+  if (trimmedId.match(/[!@#$%^&*()_+=\[\]{};':"\\|,<>\/?]/)) {
+    return {
+      command: 'delete',
+      error: 'Todo ID cannot contain special characters',
+      id: rawId
+    };
+  }
+
+  // Check if it's a valid number and the entire string is just the number
+  const numId = parseInt(trimmedId);
+  if (isNaN(numId) || trimmedId !== numId.toString()) {
+    // If parseInt succeeds but the string doesn't match exactly,
+    // it means there are extra characters
+    if (!isNaN(numId)) {
+      return {
+        command: 'delete',
+        error: 'Todo ID cannot contain special characters',
+        id: rawId
+      };
+    }
+
+    return {
+      command: 'delete',
+      error: 'Todo ID must be a valid number',
+      id: rawId
+    };
+  }
+
+  // Check for negative numbers
+  if (numId < 0) {
+    return {
+      command: 'delete',
+      error: 'Todo ID must be a positive number',
+      id: rawId
+    };
+  }
+
+  // Check for zero
+  if (numId === 0) {
+    return {
+      command: 'delete',
+      error: 'Todo ID must be greater than 0',
+      id: rawId
+    };
+  }
+
+  // Check for numbers that are too large
+  if (numId > Number.MAX_SAFE_INTEGER) {
+    return {
+      command: 'delete',
+      error: 'Todo ID is too large',
+      id: rawId
+    };
+  }
+
+  // Success case
+  return {
+    command: 'delete',
+    id: trimmedId
+  };
 }
 
 // Parse bulk delete command with options
@@ -815,16 +939,43 @@ function validateCommand(parsed) {
       break;
 
     case 'delete':
-      if (!parsed.id) {
-        console.error('❌ Error: Delete command requires a todo ID');
-        console.error('📋 Usage: node index.js delete <id>');
+      if (parsed.error) {
+        console.error(`❌ Error: ${parsed.error}`);
+
+        // Provide specific guidance based on error type
+        if (parsed.error.includes('Too many arguments')) {
+          console.error('📋 Usage: node index.js delete <id>');
+          console.error(`💡 You provided: ${parsed.extraArgs.length + 1} arguments, but only 1 ID is expected`);
+          console.error(`   Command interpreted: delete "${parsed.id}" (extra arguments ignored: ${parsed.extraArgs.join(', ')})`);
+        } else if (parsed.error.includes('empty') || parsed.error.includes('requires a todo ID')) {
+          console.error('📋 Usage: node index.js delete <id>');
+          console.error('💡 Example: node index.js delete 1');
+        } else if (parsed.error.includes('decimal')) {
+          console.error(`📋 You provided: "${parsed.id}" - this should be a whole number`);
+          console.error('💡 Example: Use "1" instead of "1.5" or "1.0"');
+        } else if (parsed.error.includes('letters')) {
+          console.error(`📋 You provided: "${parsed.id}" - todo IDs are numbers, not text`);
+          console.error('💡 Example: Use "5" instead of "five" or "todo5"');
+        } else if (parsed.error.includes('special characters')) {
+          console.error(`📋 You provided: "${parsed.id}" - todo IDs cannot contain symbols`);
+          console.error('💡 Example: Use "5" instead of "#5" or "5!"');
+        } else if (parsed.error.includes('positive number')) {
+          console.error(`📋 You provided: "${parsed.id}" - todo IDs start from 1`);
+          console.error('💡 Use positive numbers like 1, 2, 3, etc.');
+        } else if (parsed.error.includes('greater than 0')) {
+          console.error(`📋 You provided: "${parsed.id}" - todo IDs start from 1, not 0`);
+          console.error('💡 Use 1, 2, 3, etc. (there is no todo #0)');
+        } else if (parsed.error.includes('too large')) {
+          console.error(`📋 You provided: "${parsed.id}" - this number is too large`);
+          console.error('💡 Todo IDs are typically small numbers like 1, 2, 3, etc.');
+        } else {
+          // Generic fallback
+          console.error('📋 Usage: node index.js delete <id>');
+          console.error(`💡 You provided: "${parsed.id}" - this should be a number like 1, 2, 3, etc.`);
+        }
+
         console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
-        return false;
-      }
-      if (isNaN(parseInt(parsed.id))) {
-        console.error('❌ Error: Todo ID must be a valid number');
-        console.error(`📋 You provided: "${parsed.id}" - this should be a number like 1, 2, 3, etc.`);
-        console.error('💡 Tip: Use "node index.js list" to see available todo IDs');
+        console.error('📚 Help: Use "node index.js help delete" for detailed delete command help');
         return false;
       }
       break;
